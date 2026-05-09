@@ -166,7 +166,11 @@ export const Route = createFileRoute("/api/analyze-stream")({
               }
 
               send("status", { message: "Generating final predictions…" });
-              const finalPreds = predictions.filter((p) => 100 / Number(p.confidence) >= minOdds);
+              const finalPreds = predictions
+                .filter((p) => meetsConfidenceThreshold(p.prediction_type, Number(p.confidence)))
+                .filter((p) => 100 / Number(p.confidence) >= minOdds)
+                .sort((a, b) => Number(b.confidence) - Number(a.confidence))
+                .slice(0, maxPicks);
               if (finalPreds.length) await supabaseAdmin.from("predictions").insert(finalPreds);
               const avg = finalPreds.length
                 ? finalPreds.reduce((s, p) => s + Number(p.confidence), 0) / finalPreds.length
