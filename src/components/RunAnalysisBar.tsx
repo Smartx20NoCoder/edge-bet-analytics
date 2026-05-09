@@ -181,6 +181,18 @@ export function RunAnalysisBar() {
           />
         </Field>
       </div>
+      <div className="flex items-center gap-3">
+        <Field label={`Max Picks: ${maxPicks}`} Icon={Target}>
+          <Slider
+            min={2}
+            max={5}
+            step={1}
+            value={[maxPicks]}
+            onValueChange={(v) => setMaxPicks(v[0] ?? 3)}
+            className="mt-2"
+          />
+        </Field>
+      </div>
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
           <input type="checkbox" checked={trustedOnly} onChange={(e) => setTrustedOnly(e.target.checked)} className="accent-neon" />
