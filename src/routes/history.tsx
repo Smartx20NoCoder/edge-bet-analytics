@@ -56,7 +56,7 @@ function HistoryPage() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by league or date (YYYY-MM-DD)…"
+          placeholder="Search by date (YYYY-MM-DD or formatted)…"
           className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground py-2"
         />
       </div>
