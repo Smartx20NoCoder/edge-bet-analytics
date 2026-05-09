@@ -296,3 +296,18 @@ export function gradePrediction(
   }
   return null;
 }
+
+// Confidence thresholds enforced before saving any prediction.
+export const CONFIDENCE_THRESHOLDS: Record<string, number> = {
+  match_winner: 65,
+  double_chance: 75,
+  asian_handicap: 75,
+  over_1_5_goals: 75,
+  over_6_5_corners: 75,
+  over_7_5_corners: 75,
+};
+
+export function meetsConfidenceThreshold(type: string, confidence: number): boolean {
+  const t = CONFIDENCE_THRESHOLDS[type] ?? 75;
+  return Number(confidence) >= t;
+}
