@@ -41,8 +41,8 @@ function HistoryPage() {
     if (!search) return items;
     const s = search.toLowerCase();
     return items.filter((a: any) =>
-      (a.league_name ?? "").toLowerCase().includes(s) ||
-      (a.scan_date ?? "").includes(s),
+      (a.scan_date ?? "").includes(s) ||
+      new Date(a.created_at).toLocaleString().toLowerCase().includes(s),
     );
   }, [aQ.data, search]);
 
