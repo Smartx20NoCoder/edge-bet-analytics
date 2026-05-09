@@ -64,8 +64,19 @@ function teamCornerAverages(rows: Row[], teamId: string | undefined) {
     games++;
     if (isHome) { cFor += hC; cAg += aC; } else { cFor += aC; cAg += hC; }
   }
-  if (!games) return undefined;
-  return { games, cFor: cFor / games, cAg: cAg / games };
+  if (games) return { games, cFor: cFor / games, cAg: cAg / games };
+
+  // Fallback: team IDs didn't match — pool all rows generically.
+  let pooled = 0, total = 0;
+  for (const r of rows) {
+    const hC = n(r[COL.homeCorner]);
+    const aC = n(r[COL.awayCorner]);
+    if (hC === undefined || aC === undefined) continue;
+    pooled++; total += hC + aC;
+  }
+  if (!pooled) return undefined;
+  const mid = total / pooled / 2;
+  return { games: pooled, cFor: mid, cAg: mid };
 }
 
 export function predictCorners(analysis: AnyObj, homeId?: string, awayId?: string): CornerPrediction[] {
