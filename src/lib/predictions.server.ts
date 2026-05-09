@@ -261,37 +261,6 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
       });
     }
 
-    // Over 2.5: 1 - P(total <= 2)
-    let pUnder3 = 0;
-    for (let h = 0; h <= 2; h++) for (let a = 0; a <= 2 - h; a++) pUnder3 += poissonP(h, lamH) * poissonP(a, lamA);
-    const pOver25 = Math.max(0, 1 - pUnder3);
-    const ov25 = Math.round(pOver25 * 1000) / 10;
-    if (ov25 >= 60) {
-      out.push({
-        type: "over_2_5_goals",
-        selection: "Over 2.5 Goals",
-        confidence: Math.min(95, ov25),
-        riskLevel: ov25 >= 78 ? "low" : "medium",
-        reasons: [`λ total ${(lamH + lamA).toFixed(2)} — Poisson P(3+) = ${ov25.toFixed(1)}%.`],
-        stats: { lamH, lamA, pOver25 },
-      });
-    }
-
-    // BTTS
-    const pHomeScores = 1 - Math.exp(-lamH);
-    const pAwayScores = 1 - Math.exp(-lamA);
-    const pBtts = pHomeScores * pAwayScores;
-    const btts = Math.round(pBtts * 1000) / 10;
-    if (btts >= 60) {
-      out.push({
-        type: "btts",
-        selection: "Both Teams to Score",
-        confidence: Math.min(94, btts),
-        riskLevel: btts >= 75 ? "low" : "medium",
-        reasons: [`P(home scores) ${(pHomeScores * 100).toFixed(0)}%, P(away scores) ${(pAwayScores * 100).toFixed(0)}%.`],
-        stats: { pHomeScores, pAwayScores, pBtts },
-      });
-    }
   }
 
   return out;
