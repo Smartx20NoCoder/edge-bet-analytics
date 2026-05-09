@@ -37,19 +37,47 @@ export const Route = createFileRoute("/api/analyze-stream")({
               controller.enqueue(encoder.encode(JSON.stringify({ event, ...payload }) + "\n"));
             };
             try {
+              if (!process.env.ISPORTS_API_KEY) {
+                send("error", { message: "ISPORTS_API_KEY is not configured on the server. Add it as a secret and retry." });
+                controller.close();
+                return;
+              }
+
               send("status", { message: `Fetching fixtures for ${date}…` });
-              const all = await fetchScheduleByDate(date);
+              let all: Awaited<ReturnType<typeof fetchScheduleByDate>>;
+              try {
+                all = await fetchScheduleByDate(date);
+              } catch (e: any) {
+                send("error", { message: `Schedule fetch failed: ${e?.message ?? e}` });
+                controller.close();
+                return;
+              }
+              send("status", { message: `iSportsAPI returned ${all.length} total fixtures for ${date}.` });
+
               const now = Date.now();
               const windowEnd = now + timeframeHours * 3600 * 1000;
-              const candidates = all
-                .filter((m) => m.matchTime * 1000 > now && m.matchTime * 1000 <= windowEnd)
-                .filter((m) => !isBlocked(m.leagueName))
-                .filter((m) => (trustedOnly ? isTrusted(m.leagueName) : true))
-                .sort((a, b) => a.matchTime - b.matchTime)
-                .slice(0, maxMatches);
+
+              const futureOnly = all.filter((m) => m.matchTime * 1000 > now);
+              const inWindow = futureOnly.filter((m) => m.matchTime * 1000 <= windowEnd);
+              const afterBlocked = inWindow.filter((m) => !isBlocked(m.leagueName));
+              const afterTrusted = trustedOnly ? afterBlocked.filter((m) => isTrusted(m.leagueName)) : afterBlocked;
 
               send("status", {
-                message: `Found ${candidates.length} qualifying matches (from ${all.length} total fixtures).`,
+                message: `Filter breakdown — total ${all.length} → future ${futureOnly.length} → within ${timeframeHours}h ${inWindow.length} → not youth/friendly ${afterBlocked.length} → ${trustedOnly ? "major leagues" : "all leagues"} ${afterTrusted.length}.`,
+              });
+
+              if (!afterTrusted.length) {
+                const hint = trustedOnly
+                  ? "Try unchecking 'Major leagues only' or widening the timeframe."
+                  : "Try widening the timeframe or picking a different date.";
+                send("error", { message: `No qualifying matches after filters. ${hint}` });
+                controller.close();
+                return;
+              }
+
+              const candidates = afterTrusted.sort((a, b) => a.matchTime - b.matchTime).slice(0, maxMatches);
+              send("status", {
+                message: `Analyzing top ${candidates.length} of ${afterTrusted.length} qualifying matches.`,
                 total: candidates.length,
               });
 
