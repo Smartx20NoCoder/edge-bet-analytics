@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { fetchMatchAnalysis, fetchScheduleByDate } from "@/lib/isports.server";
-import { gradePrediction as _g, predictCorners, predictMatchOutcomes } from "@/lib/predictions.server";
+import { gradePrediction as _g, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "@/lib/predictions.server";
 
 const BLOCKED_KEYWORDS = ["friendly", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women"];
 const TRUSTED_LEAGUE_PATTERNS = [
@@ -27,6 +27,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const timeframeHours = Number(url.searchParams.get("timeframeHours") ?? 6);
         const maxMatches = Number(url.searchParams.get("maxMatches") ?? 15);
         const minOdds = Number(url.searchParams.get("minOdds") ?? 1);
+        const maxPicks = Math.max(1, Math.min(10, Number(url.searchParams.get("maxPicks") ?? 3)));
         const trustedOnly = url.searchParams.get("trustedOnly") !== "false";
         const refresh = url.searchParams.get("refresh") === "true";
 
