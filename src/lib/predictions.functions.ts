@@ -183,15 +183,44 @@ export const runAnalysis = createServerFn({ method: "POST" })
     };
   });
 
-export const getAnalyses = createServerFn({ method: "GET" }).handler(async () => {
-  const { data, error } = await supabaseAdmin
-    .from("analyses")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(100);
-  if (error) throw new Error(error.message);
-  return { analyses: data ?? [] };
-});
+export const getAnalyses = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ engine: z.enum(["corners", "match"]).optional() }).parse(d ?? {}))
+  .handler(async ({ data }) => {
+    const { data: rows, error } = await supabaseAdmin
+      .from("analyses")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (error) throw new Error(error.message);
+    let analyses: any[] = rows ?? [];
+    if (data.engine) {
+      const ids = analyses.map((a) => a.id);
+      if (ids.length) {
+        const { data: preds } = await supabaseAdmin
+          .from("predictions")
+          .select("analysis_id, confidence")
+          .eq("engine", data.engine)
+          .in("analysis_id", ids);
+        const counts: Record<string, { n: number; sum: number }> = {};
+        for (const p of preds ?? []) {
+          const k = (p as any).analysis_id;
+          counts[k] ??= { n: 0, sum: 0 };
+          counts[k].n++;
+          counts[k].sum += Number((p as any).confidence);
+        }
+        analyses = analyses
+          .filter((a) => counts[a.id])
+          .map((a) => ({
+            ...a,
+            predictions_generated: counts[a.id].n,
+            avg_confidence: Math.round((counts[a.id].sum / counts[a.id].n) * 10) / 10,
+          }));
+      } else {
+        analyses = [];
+      }
+    }
+    return { analyses };
+  });
 
 export const getPredictions = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
