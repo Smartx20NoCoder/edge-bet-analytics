@@ -87,7 +87,7 @@ export function predictCorners(analysis: AnyObj, homeId?: string, awayId?: strin
   const a = teamCornerAverages(awayRows, awayId);
   if (!h || !a) return [];
 
-  const projected = h.cFor * 0.35 + a.cFor * 0.25 + h.cAg * 0.2 + a.cAg * 0.2;
+  const projected = (h.cFor + a.cAg + a.cFor + h.cAg) / 2;
   const reasons = [
     `Home avg corners: ${h.cFor.toFixed(2)} for / ${h.cAg.toFixed(2)} against (${h.games} g).`,
     `Away avg corners: ${a.cFor.toFixed(2)} for / ${a.cAg.toFixed(2)} against (${a.games} g).`,
