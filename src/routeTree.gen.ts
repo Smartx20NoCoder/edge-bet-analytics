@@ -14,6 +14,7 @@ import { Route as MatchesRouteImport } from './routes/matches'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as CornersRouteImport } from './routes/corners'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiAnalyzeStreamRouteImport } from './routes/api/analyze-stream'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -40,6 +41,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAnalyzeStreamRoute = ApiAnalyzeStreamRouteImport.update({
+  id: '/api/analyze-stream',
+  path: '/api/analyze-stream',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -47,6 +53,7 @@ export interface FileRoutesByFullPath {
   '/history': typeof HistoryRoute
   '/matches': typeof MatchesRoute
   '/settings': typeof SettingsRoute
+  '/api/analyze-stream': typeof ApiAnalyzeStreamRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -54,6 +61,7 @@ export interface FileRoutesByTo {
   '/history': typeof HistoryRoute
   '/matches': typeof MatchesRoute
   '/settings': typeof SettingsRoute
+  '/api/analyze-stream': typeof ApiAnalyzeStreamRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -62,13 +70,33 @@ export interface FileRoutesById {
   '/history': typeof HistoryRoute
   '/matches': typeof MatchesRoute
   '/settings': typeof SettingsRoute
+  '/api/analyze-stream': typeof ApiAnalyzeStreamRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/corners' | '/history' | '/matches' | '/settings'
+  fullPaths:
+    | '/'
+    | '/corners'
+    | '/history'
+    | '/matches'
+    | '/settings'
+    | '/api/analyze-stream'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/corners' | '/history' | '/matches' | '/settings'
-  id: '__root__' | '/' | '/corners' | '/history' | '/matches' | '/settings'
+  to:
+    | '/'
+    | '/corners'
+    | '/history'
+    | '/matches'
+    | '/settings'
+    | '/api/analyze-stream'
+  id:
+    | '__root__'
+    | '/'
+    | '/corners'
+    | '/history'
+    | '/matches'
+    | '/settings'
+    | '/api/analyze-stream'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -77,6 +105,7 @@ export interface RootRouteChildren {
   HistoryRoute: typeof HistoryRoute
   MatchesRoute: typeof MatchesRoute
   SettingsRoute: typeof SettingsRoute
+  ApiAnalyzeStreamRoute: typeof ApiAnalyzeStreamRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -116,6 +145,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/analyze-stream': {
+      id: '/api/analyze-stream'
+      path: '/api/analyze-stream'
+      fullPath: '/api/analyze-stream'
+      preLoaderRoute: typeof ApiAnalyzeStreamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -125,6 +161,7 @@ const rootRouteChildren: RootRouteChildren = {
   HistoryRoute: HistoryRoute,
   MatchesRoute: MatchesRoute,
   SettingsRoute: SettingsRoute,
+  ApiAnalyzeStreamRoute: ApiAnalyzeStreamRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
