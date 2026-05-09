@@ -1,59 +1,87 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { fetchMatchAnalysis, fetchSchedule } from "./isports.server";
-import { predictCorners, predictMatchOutcomes } from "./predictions.server";
+import { fetchMatchAnalysis, fetchResultsByDate, fetchScheduleByDate } from "./isports.server";
+import { gradePrediction, predictCorners, predictMatchOutcomes } from "./predictions.server";
 
-const BLOCKED_KEYWORDS = ["friendly", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve"];
+const BLOCKED_KEYWORDS = ["friendly", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women"];
 
-function isBlockedLeague(name?: string) {
-  if (!name) return false;
+// Statistically reliable major leagues (name-substring match, lowercase).
+const TRUSTED_LEAGUE_PATTERNS = [
+  "premier league", "championship", "league one", "league two",
+  "la liga", "segunda",
+  "serie a", "serie b",
+  "bundesliga", "2. bundesliga",
+  "ligue 1", "ligue 2",
+  "eredivisie", "primeira liga", "süper lig", "super lig",
+  "champions league", "europa league", "conference league",
+  "mls", "liga mx", "brasileir", "j league", "k league",
+  "scottish premiership", "belgian", "swiss super",
+];
+
+function isBlocked(name?: string) {
+  if (!name) return true;
   const n = name.toLowerCase();
   return BLOCKED_KEYWORDS.some((k) => n.includes(k));
 }
+function isTrusted(name?: string) {
+  if (!name) return false;
+  const n = name.toLowerCase();
+  return TRUSTED_LEAGUE_PATTERNS.some((p) => n.includes(p));
+}
+
+const RunInput = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), // YYYY-MM-DD, defaults to today (UTC)
+  timeframeHours: z.number().int().min(1).max(48).optional(), // upcoming window
+  maxMatches: z.number().int().min(1).max(40).optional(),
+  minOdds: z.number().min(1).max(10).optional(), // implied-odds floor (1/p)
+  trustedOnly: z.boolean().optional(),
+  refresh: z.boolean().optional(), // force re-fetch of analysis cache
+});
 
 export const runAnalysis = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) =>
-    z.object({
-      leagueId: z.string().optional(),
-      maxMatches: z.number().int().min(1).max(40).optional(),
-    }).parse(d)
-  )
+  .inputValidator((d: unknown) => RunInput.parse(d ?? {}))
   .handler(async ({ data }) => {
-    const leagueId = data.leagueId || "1639";
-    const maxMatches = data.maxMatches ?? 20;
+    const date = data.date ?? new Date().toISOString().slice(0, 10);
+    const timeframeHours = data.timeframeHours ?? 6;
+    const maxMatches = data.maxMatches ?? 15;
+    const minOdds = data.minOdds ?? 1.0;
+    const trustedOnly = data.trustedOnly ?? true;
 
-    const allMatches = await fetchSchedule({ leagueId });
-    const upcoming = allMatches
-      .filter((m) => m.matchTime * 1000 >= Date.now() - 30 * 60 * 1000)
-      .filter((m) => !isBlockedLeague(m.leagueName))
+    const all = await fetchScheduleByDate(date);
+    const now = Date.now();
+    const windowEnd = now + timeframeHours * 3600 * 1000;
+
+    const candidates = all
+      .filter((m) => m.matchTime * 1000 > now) // strictly future
+      .filter((m) => m.matchTime * 1000 <= windowEnd)
+      .filter((m) => !isBlocked(m.leagueName))
+      .filter((m) => (trustedOnly ? isTrusted(m.leagueName) : true))
       .sort((a, b) => a.matchTime - b.matchTime)
       .slice(0, maxMatches);
 
-    const leagueName = upcoming[0]?.leagueName ?? null;
+    const leagueName = candidates[0]?.leagueName ?? null;
 
-    // Insert analysis row
     const { data: analysisRow, error: aErr } = await supabaseAdmin
       .from("analyses")
       .insert({
-        league_id: leagueId,
+        league_id: null,
         league_name: leagueName,
-        matches_analyzed: upcoming.length,
+        matches_analyzed: candidates.length,
         predictions_generated: 0,
         status: "running",
+        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly }),
       })
       .select()
       .single();
     if (aErr || !analysisRow) throw new Error(aErr?.message ?? "analysis insert failed");
 
     const predictions: any[] = [];
-    let confSum = 0;
 
-    for (const m of upcoming) {
+    for (const m of candidates) {
       try {
-        const analysis = await fetchMatchAnalysis(m.matchId);
+        const analysis = await fetchMatchAnalysis(m.matchId, data.refresh ?? false);
 
-        // Cache fixture
         await supabaseAdmin.from("fixtures_cache").upsert({
           match_id: m.matchId,
           league_id: m.leagueId,
@@ -65,21 +93,21 @@ export const runAnalysis = createServerFn({ method: "POST" })
           fetched_at: new Date().toISOString(),
         });
 
-        const corner = predictCorners(analysis);
+        const corners = predictCorners(analysis);
         const matchPreds = predictMatchOutcomes(analysis);
 
         const all: any[] = [];
-        if (corner) {
+        for (const c of corners) {
           all.push({
             engine: "corners",
-            prediction_type: corner.type,
-            selection: corner.selection,
-            projected_corners: corner.projectedCorners,
-            confidence: corner.confidence,
-            risk_level: corner.riskLevel,
-            reasons: corner.reasons,
-            stats: corner.stats,
-            recommendation: `Bet ${corner.selection} — projected ${corner.projectedCorners} corners.`,
+            prediction_type: c.type,
+            selection: c.selection,
+            projected_corners: c.projectedCorners,
+            confidence: c.confidence,
+            risk_level: c.riskLevel,
+            reasons: c.reasons,
+            stats: c.stats,
+            recommendation: `Bet ${c.selection} — projected ${c.projectedCorners} corners.`,
           });
         }
         for (const p of matchPreds) {
@@ -106,24 +134,31 @@ export const runAnalysis = createServerFn({ method: "POST" })
             league_name: m.leagueName,
             kickoff: new Date(m.matchTime * 1000).toISOString(),
           });
-          confSum += Number(p.confidence);
         }
       } catch (e) {
         console.error(`Match ${m.matchId} failed:`, e);
       }
     }
 
-    // Keep only top 5 corner picks
-    const corners = predictions.filter((p) => p.engine === "corners")
-      .sort((a, b) => b.confidence - a.confidence).slice(0, 5);
-    const matchOnes = predictions.filter((p) => p.engine === "match");
-    const finalPreds = [...corners, ...matchOnes];
+    // Apply implied-odds filter (odds = 100/confidence)
+    const oddsFiltered = predictions.filter((p) => 100 / Number(p.confidence) >= minOdds);
+
+    // Group: top 3-5 picks per prediction_type
+    const byType: Record<string, any[]> = {};
+    for (const p of oddsFiltered) (byType[p.prediction_type] ??= []).push(p);
+    const finalPreds: any[] = [];
+    for (const arr of Object.values(byType)) {
+      arr.sort((a, b) => b.confidence - a.confidence);
+      finalPreds.push(...arr.slice(0, 5));
+    }
 
     if (finalPreds.length) {
       await supabaseAdmin.from("predictions").insert(finalPreds);
     }
 
-    const avg = finalPreds.length ? confSum / predictions.length : null;
+    const avg = finalPreds.length
+      ? finalPreds.reduce((s, p) => s + Number(p.confidence), 0) / finalPreds.length
+      : null;
     await supabaseAdmin
       .from("analyses")
       .update({
@@ -133,7 +168,12 @@ export const runAnalysis = createServerFn({ method: "POST" })
       })
       .eq("id", analysisRow.id);
 
-    return { analysisId: analysisRow.id, matchesAnalyzed: upcoming.length, predictionsGenerated: finalPreds.length };
+    return {
+      analysisId: analysisRow.id,
+      matchesAnalyzed: candidates.length,
+      predictionsGenerated: finalPreds.length,
+      date,
+    };
   });
 
 export const getAnalyses = createServerFn({ method: "GET" }).handler(async () => {
@@ -141,7 +181,7 @@ export const getAnalyses = createServerFn({ method: "GET" }).handler(async () =>
     .from("analyses")
     .select("*")
     .order("created_at", { ascending: false })
-    .limit(50);
+    .limit(100);
   if (error) throw new Error(error.message);
   return { analyses: data ?? [] };
 });
@@ -151,14 +191,14 @@ export const getPredictions = createServerFn({ method: "POST" })
     z.object({
       engine: z.enum(["corners", "match"]).optional(),
       analysisId: z.string().optional(),
-      leagueId: z.string().optional(),
+      predictionType: z.string().optional(),
     }).parse(d ?? {})
   )
   .handler(async ({ data }) => {
     let q = supabaseAdmin.from("predictions").select("*").order("confidence", { ascending: false }).limit(200);
     if (data.engine) q = q.eq("engine", data.engine);
     if (data.analysisId) q = q.eq("analysis_id", data.analysisId);
-    if (data.leagueId) q = q.eq("league_id", data.leagueId);
+    if (data.predictionType) q = q.eq("prediction_type", data.predictionType);
     const { data: rows, error } = await q;
     if (error) throw new Error(error.message);
     return { predictions: rows ?? [] };
@@ -167,11 +207,14 @@ export const getPredictions = createServerFn({ method: "POST" })
 export const getDashboardStats = createServerFn({ method: "GET" }).handler(async () => {
   const [{ data: analyses }, { data: predictions }] = await Promise.all([
     supabaseAdmin.from("analyses").select("*").order("created_at", { ascending: false }).limit(20),
-    supabaseAdmin.from("predictions").select("league_name, confidence, engine").limit(500),
+    supabaseAdmin.from("predictions").select("league_name, confidence, engine, is_correct").limit(1000),
   ]);
   const matches = (analyses ?? []).reduce((s, a: any) => s + (a.matches_analyzed ?? 0), 0);
   const preds = predictions ?? [];
   const avg = preds.length ? preds.reduce((s: number, p: any) => s + Number(p.confidence), 0) / preds.length : 0;
+  const graded = preds.filter((p: any) => p.is_correct !== null && p.is_correct !== undefined);
+  const wins = graded.filter((p: any) => p.is_correct === true).length;
+  const winRate = graded.length ? Math.round((wins / graded.length) * 1000) / 10 : null;
   const byLeague: Record<string, { count: number; sum: number }> = {};
   for (const p of preds as any[]) {
     const k = p.league_name ?? "Unknown";
@@ -188,6 +231,8 @@ export const getDashboardStats = createServerFn({ method: "GET" }).handler(async
     avgConfidence: Math.round(avg * 10) / 10,
     totalPredictions: preds.length,
     totalScans: (analyses ?? []).length,
+    gradedPredictions: graded.length,
+    winRate,
     topLeagues,
     recentAnalyses: analyses ?? [],
   };
@@ -195,18 +240,49 @@ export const getDashboardStats = createServerFn({ method: "GET" }).handler(async
 
 export const checkApiStatus = createServerFn({ method: "GET" }).handler(async () => {
   const hasKey = Boolean(process.env.ISPORTS_API_KEY);
-  let live = false;
-  let error: string | null = null;
-  if (hasKey) {
-    try {
-      const res = await fetch(
-        `http://api.isportsapi.com/sport/football/schedule?api_key=${process.env.ISPORTS_API_KEY}&leagueId=1639`,
-      );
-      live = res.ok;
-      if (!res.ok) error = `HTTP ${res.status}`;
-    } catch (e: any) {
-      error = e?.message ?? "fetch failed";
-    }
-  }
-  return { hasKey, live, error };
+  return { hasKey, live: hasKey, error: hasKey ? null : "no key" };
 });
+
+export const updateResults = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ analysisId: z.string() }).parse(d))
+  .handler(async ({ data }) => {
+    const { data: preds, error } = await supabaseAdmin
+      .from("predictions")
+      .select("*")
+      .eq("analysis_id", data.analysisId);
+    if (error) throw new Error(error.message);
+    if (!preds || !preds.length) return { updated: 0 };
+
+    // Group by date for efficient batched results fetch
+    const byDate: Record<string, any[]> = {};
+    for (const p of preds) {
+      if (!p.kickoff) continue;
+      const d = new Date(p.kickoff).toISOString().slice(0, 10);
+      (byDate[d] ??= []).push(p);
+    }
+
+    let updated = 0;
+    for (const [date, group] of Object.entries(byDate)) {
+      const results = await fetchResultsByDate(date);
+      const map = new Map(results.map((r) => [r.matchId, r]));
+      for (const p of group) {
+        const r = map.get(String(p.match_id));
+        if (!r || (r.homeScore == null && r.awayScore == null)) continue;
+        const correct = gradePrediction(p.prediction_type, p.selection, r);
+        const totalC = (r.homeCorners ?? 0) + (r.awayCorners ?? 0);
+        await supabaseAdmin
+          .from("predictions")
+          .update({
+            home_score: r.homeScore,
+            away_score: r.awayScore,
+            total_corners: r.homeCorners != null && r.awayCorners != null ? totalC : null,
+            ft_status: r.status,
+            is_correct: correct,
+            results_updated_at: new Date().toISOString(),
+          })
+          .eq("id", p.id);
+        updated++;
+      }
+    }
+    return { updated };
+  });

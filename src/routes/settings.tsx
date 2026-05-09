@@ -16,7 +16,7 @@ export const Route = createFileRoute("/settings")({
 
 function Settings() {
   const fn = useServerFn(checkApiStatus);
-  const q = useQuery({ queryKey: ["api-status"], queryFn: () => fn(), refetchInterval: 60_000 });
+  const q = useQuery({ queryKey: ["api-status"], queryFn: () => fn() });
   return (
     <section className="mx-auto max-w-3xl px-4 sm:px-6 py-10 space-y-6">
       <h1 className="text-3xl font-bold">Settings</h1>

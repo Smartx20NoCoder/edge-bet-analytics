@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { Clock, ShieldAlert, ShieldCheck, TrendingUp } from "lucide-react";
+import { CheckCircle2, Clock, ShieldAlert, ShieldCheck, TrendingUp, XCircle } from "lucide-react";
 
 export type Prediction = {
   id: string;
@@ -16,6 +16,11 @@ export type Prediction = {
   risk_level: string;
   reasons: string[] | any;
   recommendation: string | null;
+  home_score?: number | null;
+  away_score?: number | null;
+  total_corners?: number | null;
+  ft_status?: string | null;
+  is_correct?: boolean | null;
 };
 
 function confColor(c: number) {
@@ -31,6 +36,7 @@ function confBar(c: number) {
 
 const TYPE_LABEL: Record<string, string> = {
   over_6_5_corners: "Over 6.5 Corners",
+  over_7_5_corners: "Over 7.5 Corners",
   match_winner: "Match Winner",
   double_chance: "Double Chance",
   asian_handicap: "Asian Handicap",
@@ -41,13 +47,13 @@ export function PredictionCard({ p }: { p: Prediction }) {
   const conf = Number(p.confidence);
   const reasons: string[] = Array.isArray(p.reasons) ? p.reasons : [];
   const ko = p.kickoff ? new Date(p.kickoff) : null;
+  const impliedOdds = (100 / conf).toFixed(2);
+  const hasResult = p.home_score != null && p.away_score != null;
   return (
     <div className="glass rounded-xl p-5 flex flex-col gap-4 hover:translate-y-[-2px] transition-transform">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
-            {p.league_name ?? "League"}
-          </div>
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground">{p.league_name ?? "League"}</div>
           <div className="font-semibold text-base truncate">
             {p.home_team} <span className="text-muted-foreground">vs</span> {p.away_team}
           </div>
@@ -67,9 +73,12 @@ export function PredictionCard({ p }: { p: Prediction }) {
         <div>
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Selection</div>
           <div className="text-lg font-bold">{p.selection}</div>
-          {p.projected_corners != null && (
-            <div className="text-xs text-muted-foreground mt-0.5">Projected corners: <span className="text-foreground font-semibold">{Number(p.projected_corners).toFixed(2)}</span></div>
-          )}
+          <div className="text-xs text-muted-foreground mt-0.5">
+            Implied odds <span className="text-foreground font-semibold font-mono">{impliedOdds}</span>
+            {p.projected_corners != null && (
+              <> · Proj corners <span className="text-foreground font-semibold">{Number(p.projected_corners).toFixed(2)}</span></>
+            )}
+          </div>
         </div>
         <div className="text-right">
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Confidence</div>
@@ -90,6 +99,25 @@ export function PredictionCard({ p }: { p: Prediction }) {
             </li>
           ))}
         </ul>
+      )}
+
+      {hasResult && (
+        <div className={cn(
+          "rounded-md border px-3 py-2 flex items-center justify-between text-xs",
+          p.is_correct === true ? "border-neon/40 bg-neon/5 text-neon" :
+          p.is_correct === false ? "border-destructive/40 bg-destructive/5 text-destructive" :
+          "border-border bg-secondary/40 text-muted-foreground",
+        )}>
+          <span className="inline-flex items-center gap-1.5 font-semibold">
+            {p.is_correct === true ? <CheckCircle2 className="h-3.5 w-3.5" /> :
+             p.is_correct === false ? <XCircle className="h-3.5 w-3.5" /> : null}
+            FT {p.home_score}–{p.away_score}
+            {p.total_corners != null && <span className="ml-2 text-muted-foreground">· {p.total_corners} corners</span>}
+          </span>
+          <span className="uppercase tracking-wider text-[10px]">
+            {p.is_correct === true ? "WON" : p.is_correct === false ? "LOST" : "PENDING"}
+          </span>
+        </div>
       )}
 
       <div className="flex items-center justify-between pt-2 border-t border-border/60">
