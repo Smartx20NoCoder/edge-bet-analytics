@@ -10,7 +10,6 @@ function num(v: any): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-// Walk an object and grab the first numeric value matching any key (case-insensitive substring).
 function findNum(obj: AnyObj | undefined, keys: string[]): number | undefined {
   if (!obj || typeof obj !== "object") return undefined;
   const lower = keys.map((k) => k.toLowerCase());
@@ -30,7 +29,6 @@ function findNum(obj: AnyObj | undefined, keys: string[]): number | undefined {
   return undefined;
 }
 
-// Pull a per-side stats block. iSports analysis commonly nests team form here.
 function pickSide(analysis: AnyObj, side: "home" | "away"): AnyObj {
   const candidates = [
     analysis?.[`${side}TeamFormStats`],
@@ -45,7 +43,7 @@ function pickSide(analysis: AnyObj, side: "home" | "away"): AnyObj {
 }
 
 export type CornerPrediction = {
-  type: "over_6_5_corners";
+  type: "over_6_5_corners" | "over_7_5_corners";
   selection: string;
   projectedCorners: number;
   confidence: number;
@@ -54,7 +52,7 @@ export type CornerPrediction = {
   stats: AnyObj;
 };
 
-export function predictCorners(analysis: AnyObj): CornerPrediction | null {
+export function predictCorners(analysis: AnyObj): CornerPrediction[] {
   const home = pickSide(analysis, "home");
   const away = pickSide(analysis, "away");
 
@@ -63,21 +61,18 @@ export function predictCorners(analysis: AnyObj): CornerPrediction | null {
   const homeAg = findNum(home, ["cornersagainst", "concededcorners", "cornersconceded"]);
   const awayAg = findNum(away, ["cornersagainst", "concededcorners", "cornersconceded"]);
 
-  // Need at least the two attacking-corner averages.
-  if (homeFor === undefined || awayFor === undefined) return null;
+  if (homeFor === undefined || awayFor === undefined) return [];
 
   const hAg = homeAg ?? homeFor * 0.9;
   const aAg = awayAg ?? awayFor * 0.9;
 
-  let projected =
-    homeFor * 0.35 + awayFor * 0.25 + hAg * 0.2 + aAg * 0.2;
+  let projected = homeFor * 0.35 + awayFor * 0.25 + hAg * 0.2 + aAg * 0.2;
 
   const reasons: string[] = [
     `Home avg corners for ${homeFor.toFixed(2)}, away ${awayFor.toFixed(2)}.`,
     `Conceded corners — home ${hAg.toFixed(2)} / away ${aAg.toFixed(2)}.`,
   ];
 
-  // Modifiers — only apply when source numbers exist.
   const homeShots = findNum(home, ["shotspergame", "shots", "shotsavg"]);
   const awayShots = findNum(away, ["shotspergame", "shots", "shotsavg"]);
   if (homeShots !== undefined && awayShots !== undefined) {
@@ -91,26 +86,46 @@ export function predictCorners(analysis: AnyObj): CornerPrediction | null {
     if (homeAtt + awayAtt >= 3.0) { projected += 0.4; reasons.push("Strong combined attacking output."); }
   }
 
-  // Confidence model
-  const margin = projected - 6.5;
-  let confidence = 50 + margin * 9; // every corner above 6.5 ≈ +9%
-  // Penalise if data sparse
   const dataPoints = [homeFor, awayFor, homeAg, awayAg, homeShots, awayShots].filter((v) => v !== undefined).length;
-  if (dataPoints < 4) confidence -= 8;
-  confidence = Math.max(0, Math.min(96, confidence));
 
-  if (confidence < 75 || projected < 8) return null;
-
-  const riskLevel: CornerPrediction["riskLevel"] = confidence >= 85 ? "low" : confidence >= 80 ? "medium" : "high";
-  return {
-    type: "over_6_5_corners",
-    selection: "Over 6.5 Corners",
-    projectedCorners: Math.round(projected * 100) / 100,
-    confidence: Math.round(confidence * 10) / 10,
-    riskLevel,
-    reasons,
-    stats: { homeFor, awayFor, homeAg: hAg, awayAg: aAg, homeShots, awayShots },
-  };
+  const out: CornerPrediction[] = [];
+  // Over 6.5
+  {
+    const margin = projected - 6.5;
+    let confidence = 50 + margin * 9;
+    if (dataPoints < 4) confidence -= 8;
+    confidence = Math.max(0, Math.min(96, confidence));
+    if (confidence >= 75 && projected >= 8) {
+      out.push({
+        type: "over_6_5_corners",
+        selection: "Over 6.5 Corners",
+        projectedCorners: Math.round(projected * 100) / 100,
+        confidence: Math.round(confidence * 10) / 10,
+        riskLevel: confidence >= 85 ? "low" : confidence >= 80 ? "medium" : "high",
+        reasons,
+        stats: { homeFor, awayFor, homeAg: hAg, awayAg: aAg, homeShots, awayShots },
+      });
+    }
+  }
+  // Over 7.5
+  {
+    const margin = projected - 7.5;
+    let confidence = 50 + margin * 9;
+    if (dataPoints < 4) confidence -= 8;
+    confidence = Math.max(0, Math.min(94, confidence));
+    if (confidence >= 75 && projected >= 9) {
+      out.push({
+        type: "over_7_5_corners",
+        selection: "Over 7.5 Corners",
+        projectedCorners: Math.round(projected * 100) / 100,
+        confidence: Math.round(confidence * 10) / 10,
+        riskLevel: confidence >= 85 ? "low" : confidence >= 80 ? "medium" : "high",
+        reasons,
+        stats: { homeFor, awayFor, homeAg: hAg, awayAg: aAg, homeShots, awayShots },
+      });
+    }
+  }
+  return out;
 }
 
 export type MatchPrediction = {
@@ -139,8 +154,6 @@ export function predictMatchOutcomes(analysis: AnyObj): MatchPrediction[] {
 
   const out: MatchPrediction[] = [];
 
-  // --- Match winner / double chance
-  // Build a strength index in [0,1] per side
   const strength = (gf?: number, ga?: number, win?: number, form?: number) => {
     let s = 0, n = 0;
     if (gf !== undefined) { s += Math.min(gf, 3) / 3; n++; }
@@ -149,12 +162,12 @@ export function predictMatchOutcomes(analysis: AnyObj): MatchPrediction[] {
     if (form !== undefined) { s += Math.min(form, 100) / 100; n++; }
     return n ? s / n : 0.5;
   };
-  const homeS = strength(homeGF, homeGA, homeWin, homeForm) + 0.05; // home edge
+  const homeS = strength(homeGF, homeGA, homeWin, homeForm) + 0.05;
   const awayS = strength(awayGF, awayGA, awayWin, awayForm);
   const total = homeS + awayS || 1;
   const homeProb = homeS / total;
   const awayProb = awayS / total;
-  const drawProb = Math.max(0, 1 - homeProb - awayProb + 0.2); // soften
+  const drawProb = Math.max(0, 1 - homeProb - awayProb + 0.2);
   const norm = homeProb + awayProb + drawProb;
   const pH = homeProb / norm, pA = awayProb / norm, pD = drawProb / norm;
 
@@ -174,7 +187,6 @@ export function predictMatchOutcomes(analysis: AnyObj): MatchPrediction[] {
     });
   }
 
-  // Double chance always safer; emit if either side meaningfully ahead
   const dcConf = Math.round((pH >= pA ? pH + pD : pA + pD) * 100 * 10) / 10;
   if (dcConf >= 78) {
     out.push({
@@ -187,7 +199,6 @@ export function predictMatchOutcomes(analysis: AnyObj): MatchPrediction[] {
     });
   }
 
-  // Asian Handicap — favour the stronger side at -0.25 / +0.25
   const edge = Math.abs(homeS - awayS);
   if (edge >= 0.18) {
     const ahConf = Math.round(Math.min(90, 70 + edge * 100) * 10) / 10;
@@ -203,9 +214,7 @@ export function predictMatchOutcomes(analysis: AnyObj): MatchPrediction[] {
     }
   }
 
-  // Over 1.5 goals — based on combined goals expectation
   const expGoals = Math.min(5, homeGF * 0.85 + awayGF * 0.85 + (homeGA ?? 1) * 0.15 + (awayGA ?? 1) * 0.15);
-  // Poisson P(>=2) approximation
   const lambda = expGoals;
   const p0 = Math.exp(-lambda);
   const p1 = lambda * p0;
@@ -223,4 +232,34 @@ export function predictMatchOutcomes(analysis: AnyObj): MatchPrediction[] {
   }
 
   return out;
+}
+
+/** Grade a stored prediction against an iSportsAPI result row. */
+export function gradePrediction(
+  predictionType: string,
+  selection: string,
+  r: { homeScore: number | null; awayScore: number | null; homeCorners: number | null; awayCorners: number | null },
+): boolean | null {
+  const hs = r.homeScore, as = r.awayScore;
+  const corners = (r.homeCorners ?? 0) + (r.awayCorners ?? 0);
+  const cornersOk = r.homeCorners != null && r.awayCorners != null;
+  if (predictionType === "over_6_5_corners") return cornersOk ? corners > 6.5 : null;
+  if (predictionType === "over_7_5_corners") return cornersOk ? corners > 7.5 : null;
+  if (hs == null || as == null) return null;
+  if (predictionType === "over_1_5_goals") return hs + as > 1.5;
+  if (predictionType === "match_winner") {
+    if (selection.startsWith("Home")) return hs > as;
+    return as > hs;
+  }
+  if (predictionType === "double_chance") {
+    if (selection.includes("1X")) return hs >= as;
+    return as >= hs;
+  }
+  if (predictionType === "asian_handicap") {
+    // Quarter-line favourite -0.25 — half stake on -0 (push if draw -> half loss),
+    // simplified here to: favourite must win by 1+ to fully win; draw = loss.
+    if (selection.startsWith("Home")) return hs > as;
+    return as > hs;
+  }
+  return null;
 }
