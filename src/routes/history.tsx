@@ -18,6 +18,17 @@ export const Route = createFileRoute("/history")({
   component: HistoryPage,
 });
 
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function formatScanLabel(iso: string): string {
+  const d = new Date(iso);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mon = MONTHS[d.getMonth()];
+  const yyyy = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${dd} ${mon} ${yyyy} · ${hh}:${mm}`;
+}
+
 const TYPE_FILTERS = [
   { id: "all", label: "All" },
   { id: "over_6_5_corners", label: "Corners 6.5" },
