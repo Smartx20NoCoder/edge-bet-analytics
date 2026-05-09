@@ -64,8 +64,19 @@ function teamCornerAverages(rows: Row[], teamId: string | undefined) {
     games++;
     if (isHome) { cFor += hC; cAg += aC; } else { cFor += aC; cAg += hC; }
   }
-  if (!games) return undefined;
-  return { games, cFor: cFor / games, cAg: cAg / games };
+  if (games) return { games, cFor: cFor / games, cAg: cAg / games };
+
+  // Fallback: team IDs didn't match — pool all rows generically.
+  let pooled = 0, total = 0;
+  for (const r of rows) {
+    const hC = n(r[COL.homeCorner]);
+    const aC = n(r[COL.awayCorner]);
+    if (hC === undefined || aC === undefined) continue;
+    pooled++; total += hC + aC;
+  }
+  if (!pooled) return undefined;
+  const mid = total / pooled / 2;
+  return { games: pooled, cFor: mid, cAg: mid };
 }
 
 export function predictCorners(analysis: AnyObj, homeId?: string, awayId?: string): CornerPrediction[] {
@@ -76,7 +87,7 @@ export function predictCorners(analysis: AnyObj, homeId?: string, awayId?: strin
   const a = teamCornerAverages(awayRows, awayId);
   if (!h || !a) return [];
 
-  const projected = h.cFor * 0.35 + a.cFor * 0.25 + h.cAg * 0.2 + a.cAg * 0.2;
+  const projected = (h.cFor + a.cAg + a.cFor + h.cAg) / 2;
   const reasons = [
     `Home avg corners: ${h.cFor.toFixed(2)} for / ${h.cAg.toFixed(2)} against (${h.games} g).`,
     `Away avg corners: ${a.cFor.toFixed(2)} for / ${a.cAg.toFixed(2)} against (${a.games} g).`,
@@ -110,7 +121,7 @@ export function predictCorners(analysis: AnyObj, homeId?: string, awayId?: strin
 // ---------------- Match outcomes ----------------
 
 export type MatchPrediction = {
-  type: "match_winner" | "double_chance" | "asian_handicap" | "over_1_5_goals" | "over_2_5_goals" | "btts";
+  type: "match_winner" | "double_chance" | "asian_handicap" | "over_1_5_goals";
   selection: string;
   confidence: number;
   riskLevel: "low" | "medium" | "high";
@@ -250,37 +261,6 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
       });
     }
 
-    // Over 2.5: 1 - P(total <= 2)
-    let pUnder3 = 0;
-    for (let h = 0; h <= 2; h++) for (let a = 0; a <= 2 - h; a++) pUnder3 += poissonP(h, lamH) * poissonP(a, lamA);
-    const pOver25 = Math.max(0, 1 - pUnder3);
-    const ov25 = Math.round(pOver25 * 1000) / 10;
-    if (ov25 >= 60) {
-      out.push({
-        type: "over_2_5_goals",
-        selection: "Over 2.5 Goals",
-        confidence: Math.min(95, ov25),
-        riskLevel: ov25 >= 78 ? "low" : "medium",
-        reasons: [`λ total ${(lamH + lamA).toFixed(2)} — Poisson P(3+) = ${ov25.toFixed(1)}%.`],
-        stats: { lamH, lamA, pOver25 },
-      });
-    }
-
-    // BTTS
-    const pHomeScores = 1 - Math.exp(-lamH);
-    const pAwayScores = 1 - Math.exp(-lamA);
-    const pBtts = pHomeScores * pAwayScores;
-    const btts = Math.round(pBtts * 1000) / 10;
-    if (btts >= 60) {
-      out.push({
-        type: "btts",
-        selection: "Both Teams to Score",
-        confidence: Math.min(94, btts),
-        riskLevel: btts >= 75 ? "low" : "medium",
-        reasons: [`P(home scores) ${(pHomeScores * 100).toFixed(0)}%, P(away scores) ${(pAwayScores * 100).toFixed(0)}%.`],
-        stats: { pHomeScores, pAwayScores, pBtts },
-      });
-    }
   }
 
   return out;

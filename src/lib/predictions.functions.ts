@@ -77,8 +77,11 @@ export const runAnalysis = createServerFn({ method: "POST" })
     if (aErr || !analysisRow) throw new Error(aErr?.message ?? "analysis insert failed");
 
     const predictions: any[] = [];
+    const seen = new Set<string>();
 
     for (const m of candidates) {
+      if (seen.has(String(m.matchId))) continue;
+      seen.add(String(m.matchId));
       try {
         const analysis = await fetchMatchAnalysis(m.matchId, data.refresh ?? false);
 
@@ -93,8 +96,8 @@ export const runAnalysis = createServerFn({ method: "POST" })
           fetched_at: new Date().toISOString(),
         });
 
-        const corners = predictCorners(analysis);
-        const matchPreds = predictMatchOutcomes(analysis);
+        const corners = predictCorners(analysis, m.homeId, m.awayId);
+        const matchPreds = predictMatchOutcomes(analysis, m.homeId, m.awayId);
 
         const all: any[] = [];
         for (const c of corners) {
@@ -123,9 +126,12 @@ export const runAnalysis = createServerFn({ method: "POST" })
           });
         }
 
-        for (const p of all) {
+        // One best pick per match.
+        all.sort((a, b) => Number(b.confidence) - Number(a.confidence));
+        const best = all[0];
+        if (best) {
           predictions.push({
-            ...p,
+            ...best,
             analysis_id: analysisRow.id,
             match_id: m.matchId,
             home_team: m.homeName,
@@ -141,16 +147,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
     }
 
     // Apply implied-odds filter (odds = 100/confidence)
-    const oddsFiltered = predictions.filter((p) => 100 / Number(p.confidence) >= minOdds);
-
-    // Group: top 3-5 picks per prediction_type
-    const byType: Record<string, any[]> = {};
-    for (const p of oddsFiltered) (byType[p.prediction_type] ??= []).push(p);
-    const finalPreds: any[] = [];
-    for (const arr of Object.values(byType)) {
-      arr.sort((a, b) => b.confidence - a.confidence);
-      finalPreds.push(...arr.slice(0, 5));
-    }
+    const finalPreds = predictions.filter((p) => 100 / Number(p.confidence) >= minOdds);
 
     if (finalPreds.length) {
       await supabaseAdmin.from("predictions").insert(finalPreds);
