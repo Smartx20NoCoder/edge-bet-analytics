@@ -113,11 +113,10 @@ function HistoryItem({ a, open, onToggle, fp, typeFilter }: any) {
       <button onClick={onToggle} className="w-full flex items-center gap-3 p-4 text-left">
         {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         <div className="flex-1 min-w-0">
-          <div className="font-semibold">{a.league_name ?? "Multiple leagues"}</div>
-          <div className="text-xs text-muted-foreground">{new Date(a.created_at).toLocaleString()} · {a.scan_date}</div>
+          <div className="font-semibold">{formatScanLabel(a.created_at)}</div>
+          <div className="text-xs text-muted-foreground">{a.predictions_generated} pick{a.predictions_generated === 1 ? "" : "s"} · {a.matches_analyzed} match{a.matches_analyzed === 1 ? "" : "es"} analysed</div>
         </div>
         <div className="text-right">
-          <div className="text-xs text-muted-foreground">{a.matches_analyzed} matches · {a.predictions_generated} picks</div>
           {a.avg_confidence != null && <div className="font-mono text-neon font-bold">{a.avg_confidence}%</div>}
         </div>
       </button>
