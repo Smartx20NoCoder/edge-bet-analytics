@@ -203,7 +203,7 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
   }
 
   const dcConf = Math.round((homeFav ? pH + pD : pA + pD) * 1000) / 10;
-  if (dcConf >= 60) {
+  if (dcConf >= 75) {
     out.push({
       type: "double_chance",
       selection: homeFav ? "Home or Draw (1X)" : "Draw or Away (X2)",
