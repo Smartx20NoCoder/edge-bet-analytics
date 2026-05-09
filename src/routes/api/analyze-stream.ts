@@ -81,16 +81,16 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 total: candidates.length,
               });
 
-              const leagueName = candidates[0]?.leagueName ?? null;
+              const scanStartedAt = new Date().toISOString();
               const { data: analysisRow, error: aErr } = await supabaseAdmin
                 .from("analyses")
                 .insert({
                   league_id: null,
-                  league_name: leagueName,
+                  league_name: null,
                   matches_analyzed: candidates.length,
                   predictions_generated: 0,
                   status: "running",
-                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly }),
+                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt }),
                 })
                 .select()
                 .single();
