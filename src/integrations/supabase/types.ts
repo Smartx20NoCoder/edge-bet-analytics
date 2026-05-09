@@ -107,12 +107,16 @@ export type Database = {
       predictions: {
         Row: {
           analysis_id: string | null
+          away_score: number | null
           away_team: string
           confidence: number
           created_at: string
           engine: string
+          ft_status: string | null
+          home_score: number | null
           home_team: string
           id: string
+          is_correct: boolean | null
           kickoff: string | null
           league_id: string | null
           league_name: string | null
@@ -121,18 +125,24 @@ export type Database = {
           projected_corners: number | null
           reasons: Json
           recommendation: string | null
+          results_updated_at: string | null
           risk_level: string
           selection: string
           stats: Json
+          total_corners: number | null
         }
         Insert: {
           analysis_id?: string | null
+          away_score?: number | null
           away_team: string
           confidence: number
           created_at?: string
           engine: string
+          ft_status?: string | null
+          home_score?: number | null
           home_team: string
           id?: string
+          is_correct?: boolean | null
           kickoff?: string | null
           league_id?: string | null
           league_name?: string | null
@@ -141,18 +151,24 @@ export type Database = {
           projected_corners?: number | null
           reasons?: Json
           recommendation?: string | null
+          results_updated_at?: string | null
           risk_level?: string
           selection: string
           stats?: Json
+          total_corners?: number | null
         }
         Update: {
           analysis_id?: string | null
+          away_score?: number | null
           away_team?: string
           confidence?: number
           created_at?: string
           engine?: string
+          ft_status?: string | null
+          home_score?: number | null
           home_team?: string
           id?: string
+          is_correct?: boolean | null
           kickoff?: string | null
           league_id?: string | null
           league_name?: string | null
@@ -161,9 +177,11 @@ export type Database = {
           projected_corners?: number | null
           reasons?: Json
           recommendation?: string | null
+          results_updated_at?: string | null
           risk_level?: string
           selection?: string
           stats?: Json
+          total_corners?: number | null
         }
         Relationships: [
           {
