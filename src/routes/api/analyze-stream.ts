@@ -170,12 +170,16 @@ export const Route = createFileRoute("/api/analyze-stream")({
               const avg = finalPreds.length
                 ? finalPreds.reduce((s, p) => s + Number(p.confidence), 0) / finalPreds.length
                 : null;
+              const distinctLeagues = new Set(
+                candidates.map((c) => c.leagueName).filter(Boolean) as string[],
+              ).size;
               await supabaseAdmin
                 .from("analyses")
                 .update({
                   predictions_generated: finalPreds.length,
                   avg_confidence: avg ? Math.round(avg * 100) / 100 : null,
                   status: "completed",
+                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt, distinctLeagues }),
                 })
                 .eq("id", analysisRow.id);
 
