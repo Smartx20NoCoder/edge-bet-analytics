@@ -1,0 +1,77 @@
+import { Link, Outlet, useLocation } from "@tanstack/react-router";
+import { Activity, CornerDownRight, History, LayoutDashboard, Settings, Trophy } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+const NAV = [
+  { to: "/", label: "Dashboard", Icon: LayoutDashboard },
+  { to: "/corners", label: "Corners", Icon: CornerDownRight },
+  { to: "/matches", label: "Match Outcomes", Icon: Trophy },
+  { to: "/history", label: "History", Icon: History },
+  { to: "/settings", label: "Settings", Icon: Settings },
+] as const;
+
+export function AppLayout() {
+  const loc = useLocation();
+  return (
+    <div className="min-h-screen flex flex-col">
+      <header className="sticky top-0 z-30 glass border-b">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+          <Link to="/" className="flex items-center gap-2">
+            <div className="h-8 w-8 rounded-md bg-neon glow-neon flex items-center justify-center">
+              <Activity className="h-4 w-4 text-neon-foreground" />
+            </div>
+            <div className="leading-tight">
+              <div className="font-bold tracking-tight text-base">BetEdge<span className="text-neon">·</span>AI</div>
+              <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Football Analytics Terminal</div>
+            </div>
+          </Link>
+          <nav className="hidden md:flex items-center gap-1">
+            {NAV.map(({ to, label, Icon }) => {
+              const active = loc.pathname === to;
+              return (
+                <Link
+                  key={to}
+                  to={to}
+                  className={cn(
+                    "inline-flex items-center gap-2 px-3 h-9 rounded-md text-sm transition-colors",
+                    active
+                      ? "bg-neon/10 text-neon glow-neon"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent",
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  {label}
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
+        {/* Mobile nav */}
+        <nav className="md:hidden flex overflow-x-auto px-3 pb-2 gap-1">
+          {NAV.map(({ to, label, Icon }) => {
+            const active = loc.pathname === to;
+            return (
+              <Link
+                key={to}
+                to={to}
+                className={cn(
+                  "shrink-0 inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-xs",
+                  active ? "bg-neon/10 text-neon" : "text-muted-foreground bg-accent/40",
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </Link>
+            );
+          })}
+        </nav>
+      </header>
+      <main className="flex-1">
+        <Outlet />
+      </main>
+      <footer className="border-t py-6 text-center text-xs text-muted-foreground">
+        Powered by real iSportsAPI data · For informational use only · Bet responsibly.
+      </footer>
+    </div>
+  );
+}
