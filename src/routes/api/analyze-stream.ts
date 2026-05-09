@@ -97,8 +97,14 @@ export const Route = createFileRoute("/api/analyze-stream")({
               if (aErr || !analysisRow) throw new Error(aErr?.message ?? "analysis insert failed");
 
               const predictions: any[] = [];
+              const seen = new Set<string>();
               for (let i = 0; i < candidates.length; i++) {
                 const m = candidates[i];
+                if (seen.has(String(m.matchId))) {
+                  send("status", { message: `Skipping duplicate match ${m.homeName} vs ${m.awayName}.` });
+                  continue;
+                }
+                seen.add(String(m.matchId));
                 send("match", {
                   index: i + 1,
                   total: candidates.length,
@@ -133,9 +139,12 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     confidence: p.confidence, risk_level: p.riskLevel, reasons: p.reasons,
                     stats: p.stats, recommendation: `Lean ${p.selection} (${p.confidence}% model confidence).`,
                   });
-                  for (const p of collected) {
+                  // One best pick per match: pick highest confidence only.
+                  collected.sort((a, b) => Number(b.confidence) - Number(a.confidence));
+                  const best = collected[0];
+                  if (best) {
                     predictions.push({
-                      ...p, analysis_id: analysisRow.id, match_id: m.matchId,
+                      ...best, analysis_id: analysisRow.id, match_id: m.matchId,
                       home_team: m.homeName, away_team: m.awayName,
                       league_id: m.leagueId, league_name: m.leagueName,
                       kickoff: new Date(m.matchTime * 1000).toISOString(),
@@ -144,7 +153,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   send("match_done", {
                     index: i + 1, total: candidates.length,
                     home: m.homeName, away: m.awayName,
-                    picks: collected.length,
+                    picks: best ? 1 : 0,
                   });
                 } catch (e: any) {
                   send("match_error", {
@@ -156,14 +165,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
               }
 
               send("status", { message: "Generating final predictions…" });
-              const oddsFiltered = predictions.filter((p) => 100 / Number(p.confidence) >= minOdds);
-              const byType: Record<string, any[]> = {};
-              for (const p of oddsFiltered) (byType[p.prediction_type] ??= []).push(p);
-              const finalPreds: any[] = [];
-              for (const arr of Object.values(byType)) {
-                arr.sort((a, b) => b.confidence - a.confidence);
-                finalPreds.push(...arr.slice(0, 5));
-              }
+              const finalPreds = predictions.filter((p) => 100 / Number(p.confidence) >= minOdds);
               if (finalPreds.length) await supabaseAdmin.from("predictions").insert(finalPreds);
               const avg = finalPreds.length
                 ? finalPreds.reduce((s, p) => s + Number(p.confidence), 0) / finalPreds.length
