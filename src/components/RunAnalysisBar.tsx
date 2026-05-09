@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, RefreshCw, Calendar, Clock, Hash, TrendingUp, CheckCircle2, AlertCircle, Activity } from "lucide-react";
+import { Loader2, RefreshCw, Calendar, Clock, Hash, TrendingUp, CheckCircle2, AlertCircle, Activity, Target } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -25,6 +26,7 @@ export function RunAnalysisBar() {
   const [minOdds, setMinOdds] = useState(1.15);
   const [trustedOnly, setTrustedOnly] = useState(true);
   const [refresh, setRefresh] = useState(false);
+  const [maxPicks, setMaxPicks] = useState(3);
 
   const [open, setOpen] = useState(false);
   const [running, setRunning] = useState(false);
@@ -50,6 +52,7 @@ export function RunAnalysisBar() {
     const params = new URLSearchParams({
       date, timeframeHours: String(timeframeHours), maxMatches: String(maxMatches),
       minOdds: String(minOdds), trustedOnly: String(trustedOnly), refresh: String(refresh),
+      maxPicks: String(maxPicks),
     });
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -175,6 +178,18 @@ export function RunAnalysisBar() {
             value={minOdds}
             onChange={(e) => setMinOdds(Math.max(1, Math.min(5, Number(e.target.value) || 1)))}
             className="h-9 w-full rounded-md bg-secondary border border-border px-3 text-sm font-mono"
+          />
+        </Field>
+      </div>
+      <div className="flex items-center gap-3">
+        <Field label={`Max Picks: ${maxPicks}`} Icon={Target}>
+          <Slider
+            min={2}
+            max={5}
+            step={1}
+            value={[maxPicks]}
+            onValueChange={(v) => setMaxPicks(v[0] ?? 3)}
+            className="mt-2"
           />
         </Field>
       </div>

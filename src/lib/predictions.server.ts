@@ -101,7 +101,7 @@ export function predictCorners(analysis: AnyObj, homeId?: string, awayId?: strin
     let confidence = 50 + margin * 9;
     if (dataPoints < 8) confidence -= 8;
     confidence = Math.max(0, Math.min(line === 6.5 ? 96 : 94, confidence));
-    if (confidence >= 65 && projected >= projMin) {
+    if (confidence >= 75 && projected >= projMin) {
       out.push({
         type: line === 6.5 ? "over_6_5_corners" : "over_7_5_corners",
         selection: `Over ${line} Corners`,
@@ -229,7 +229,7 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
   const edge = Math.abs(pH - pA);
   if (edge >= 0.18) {
     const ahConf = Math.round(Math.min(90, 65 + edge * 100) * 10) / 10;
-    if (ahConf >= 70) {
+    if (ahConf >= 75) {
       out.push({
         type: "asian_handicap",
         selection: homeFav ? "Home -0.25 AH" : "Away -0.25 AH",
@@ -250,7 +250,7 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
     const p01 = poissonP(0, lamH) * poissonP(1, lamA);
     const pOver15 = Math.max(0, 1 - p00 - p10 - p01);
     const ov15 = Math.round(pOver15 * 1000) / 10;
-    if (ov15 >= 70) {
+    if (ov15 >= 75) {
       out.push({
         type: "over_1_5_goals",
         selection: "Over 1.5 Goals",
@@ -295,4 +295,19 @@ export function gradePrediction(
     return as > hs;
   }
   return null;
+}
+
+// Confidence thresholds enforced before saving any prediction.
+export const CONFIDENCE_THRESHOLDS: Record<string, number> = {
+  match_winner: 65,
+  double_chance: 75,
+  asian_handicap: 75,
+  over_1_5_goals: 75,
+  over_6_5_corners: 75,
+  over_7_5_corners: 75,
+};
+
+export function meetsConfidenceThreshold(type: string, confidence: number): boolean {
+  const t = CONFIDENCE_THRESHOLDS[type] ?? 75;
+  return Number(confidence) >= t;
 }
