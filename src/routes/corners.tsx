@@ -1,9 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useServerFn } from "@tanstack/react-start";
-import { useQuery } from "@tanstack/react-query";
-import { getPredictions } from "@/lib/predictions.functions";
-import { PredictionCard, type Prediction } from "@/components/PredictionCard";
 import { RunAnalysisBar } from "@/components/RunAnalysisBar";
+import { ScanGroupedList } from "@/components/ScanGroupedList";
 import { useState } from "react";
 
 export const Route = createFileRoute("/corners")({
@@ -24,13 +21,10 @@ const FILTERS = [
 
 function CornersPage() {
   const [filter, setFilter] = useState("all");
-  const fn = useServerFn(getPredictions);
-  const q = useQuery({ queryKey: ["preds", "corners"], queryFn: () => fn({ data: { engine: "corners" } }) });
-  const list = ((q.data?.predictions ?? []) as Prediction[]).filter((p) => filter === "all" || p.prediction_type === filter);
   return (
     <section className="mx-auto max-w-7xl px-4 sm:px-6 py-10">
       <h1 className="text-3xl font-bold">Corner <span className="text-neon">Engine</span></h1>
-      <p className="text-sm text-muted-foreground mt-1">Over 6.5 / 7.5 corners · 75%+ confidence · top 5 per line.</p>
+      <p className="text-sm text-muted-foreground mt-1">Over 6.5 / 7.5 corners · 75%+ confidence · grouped by scan.</p>
       <div className="mt-6"><RunAnalysisBar /></div>
       <div className="mt-6 flex flex-wrap gap-1.5">
         {FILTERS.map((f) => (
@@ -41,9 +35,7 @@ function CornersPage() {
         ))}
       </div>
       <div className="mt-6">
-        {q.isLoading ? <p className="text-muted-foreground text-sm">Loading…</p> :
-         list.length === 0 ? <p className="glass rounded-xl p-10 text-center text-sm text-muted-foreground">No qualifying corner picks yet.</p> :
-         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">{list.map((p) => <PredictionCard key={p.id} p={p} />)}</div>}
+        <ScanGroupedList engine="corners" typeFilter={filter} accent="neon" />
       </div>
     </section>
   );
