@@ -119,8 +119,8 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     raw: m.raw,
                     fetched_at: new Date().toISOString(),
                   });
-                  const corners = predictCorners(analysis);
-                  const matchPreds = predictMatchOutcomes(analysis);
+                  const corners = predictCorners(analysis, m.homeId, m.awayId);
+                  const matchPreds = predictMatchOutcomes(analysis, m.homeId, m.awayId);
                   const collected: any[] = [];
                   for (const c of corners) collected.push({
                     engine: "corners", prediction_type: c.type, selection: c.selection,

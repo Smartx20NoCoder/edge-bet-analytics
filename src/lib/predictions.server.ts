@@ -1,46 +1,46 @@
 // Statistical prediction engines. Server-only.
-// Defensive parsing: iSportsAPI analysis payloads vary by league/match.
-// We only emit predictions when underlying data is present — never fabricate.
+// Parses the actual iSportsAPI /analysis response shape:
+//   { code, data: { homeLastMatches, awayLastMatches, headToHead,
+//                   homeGoals, awayGoals, homeDataVs, awayDataVs,
+//                   homeOdds, awayOdds, homeSingleDouble, awaySingleDouble, ... } }
+// Each *LastMatches/headToHead row is a CSV string.
 
 type AnyObj = Record<string, any>;
 
-function num(v: any): number | undefined {
+// CSV column indices per iSports docs.
+const COL = {
+  matchId: 0, league: 1, leagueId: 2, matchTime: 3,
+  home: 4, homeTeamId: 5, away: 6, awayTeamId: 7,
+  scoreHome: 8, scoreAway: 9, homeHalfScore: 10, awayHalfScore: 11,
+  homeRed: 12, awayRed: 13, homeCorner: 14, awayCorner: 15,
+  initialHandicapHome: 16, initialHandicap: 17, initialHandicapAway: 18,
+  instantHandicapHome: 19, instantHandicap: 20, instantHandicapAway: 21,
+  initialHome: 22, initialDraw: 23, initialAway: 24,
+  instantHome: 25, instantDraw: 26, instantAway: 27,
+  initialOver: 28, initialTotal: 29, initialUnder: 30,
+  instantOver: 31, instantTotal: 32, instantUnder: 33,
+} as const;
+
+function n(v: any): number | undefined {
   if (v === null || v === undefined || v === "") return undefined;
-  const n = typeof v === "string" ? parseFloat(v) : Number(v);
-  return Number.isFinite(n) ? n : undefined;
+  const x = typeof v === "string" ? parseFloat(v) : Number(v);
+  return Number.isFinite(x) ? x : undefined;
 }
 
-function findNum(obj: AnyObj | undefined, keys: string[]): number | undefined {
-  if (!obj || typeof obj !== "object") return undefined;
-  const lower = keys.map((k) => k.toLowerCase());
-  for (const [k, v] of Object.entries(obj)) {
-    const lk = k.toLowerCase();
-    if (lower.some((needle) => lk.includes(needle))) {
-      const n = num(v);
-      if (n !== undefined) return n;
-    }
-  }
-  for (const v of Object.values(obj)) {
-    if (v && typeof v === "object" && !Array.isArray(v)) {
-      const n = findNum(v as AnyObj, keys);
-      if (n !== undefined) return n;
-    }
-  }
-  return undefined;
+type Row = string[];
+function parseRows(arr: any): Row[] {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((r) => (typeof r === "string" ? r.split(",").map((s) => s.trim()) : Array.isArray(r) ? r.map(String) : null))
+    .filter((r): r is Row => Array.isArray(r) && r.length >= 16);
 }
 
-function pickSide(analysis: AnyObj, side: "home" | "away"): AnyObj {
-  const candidates = [
-    analysis?.[`${side}TeamFormStats`],
-    analysis?.[`${side}TeamForm`],
-    analysis?.[`${side}Stats`],
-    analysis?.teamForm?.[side],
-    analysis?.stats?.[side],
-    analysis?.data?.[`${side}TeamFormStats`],
-    analysis?.data?.[`${side}Stats`],
-  ];
-  return candidates.find((c) => c && typeof c === "object") ?? {};
+function root(analysis: AnyObj): AnyObj {
+  // iSports wraps payload under .data; tolerate both shapes.
+  return analysis?.data && typeof analysis.data === "object" ? analysis.data : analysis ?? {};
 }
+
+// ---------------- Corners ----------------
 
 export type CornerPrediction = {
   type: "over_6_5_corners" | "over_7_5_corners";
@@ -52,84 +52,65 @@ export type CornerPrediction = {
   stats: AnyObj;
 };
 
-export function predictCorners(analysis: AnyObj): CornerPrediction[] {
-  const home = pickSide(analysis, "home");
-  const away = pickSide(analysis, "away");
+function teamCornerAverages(rows: Row[], teamId: string | undefined) {
+  let games = 0, cFor = 0, cAg = 0;
+  for (const r of rows) {
+    const hC = n(r[COL.homeCorner]);
+    const aC = n(r[COL.awayCorner]);
+    if (hC === undefined || aC === undefined) continue;
+    const isHome = teamId && r[COL.homeTeamId] === String(teamId);
+    const isAway = teamId && r[COL.awayTeamId] === String(teamId);
+    if (!isHome && !isAway) continue;
+    games++;
+    if (isHome) { cFor += hC; cAg += aC; } else { cFor += aC; cAg += hC; }
+  }
+  if (!games) return undefined;
+  return { games, cFor: cFor / games, cAg: cAg / games };
+}
 
-  const homeFor = findNum(home, ["cornersfor", "cornersper", "avgcorners", "corner"]);
-  const awayFor = findNum(away, ["cornersfor", "cornersper", "avgcorners", "corner"]);
-  const homeAg = findNum(home, ["cornersagainst", "concededcorners", "cornersconceded"]);
-  const awayAg = findNum(away, ["cornersagainst", "concededcorners", "cornersconceded"]);
+export function predictCorners(analysis: AnyObj, homeId?: string, awayId?: string): CornerPrediction[] {
+  const d = root(analysis);
+  const homeRows = parseRows(d.homeLastMatches);
+  const awayRows = parseRows(d.awayLastMatches);
+  const h = teamCornerAverages(homeRows, homeId);
+  const a = teamCornerAverages(awayRows, awayId);
+  if (!h || !a) return [];
 
-  if (homeFor === undefined || awayFor === undefined) return [];
-
-  const hAg = homeAg ?? homeFor * 0.9;
-  const aAg = awayAg ?? awayFor * 0.9;
-
-  let projected = homeFor * 0.35 + awayFor * 0.25 + hAg * 0.2 + aAg * 0.2;
-
-  const reasons: string[] = [
-    `Home avg corners for ${homeFor.toFixed(2)}, away ${awayFor.toFixed(2)}.`,
-    `Conceded corners — home ${hAg.toFixed(2)} / away ${aAg.toFixed(2)}.`,
+  const projected = h.cFor * 0.35 + a.cFor * 0.25 + h.cAg * 0.2 + a.cAg * 0.2;
+  const reasons = [
+    `Home avg corners: ${h.cFor.toFixed(2)} for / ${h.cAg.toFixed(2)} against (${h.games} g).`,
+    `Away avg corners: ${a.cFor.toFixed(2)} for / ${a.cAg.toFixed(2)} against (${a.games} g).`,
+    `Projected total: ${projected.toFixed(2)}.`,
   ];
-
-  const homeShots = findNum(home, ["shotspergame", "shots", "shotsavg"]);
-  const awayShots = findNum(away, ["shotspergame", "shots", "shotsavg"]);
-  if (homeShots !== undefined && awayShots !== undefined) {
-    const tempo = (homeShots + awayShots) / 2;
-    if (tempo >= 13) { projected += 0.6; reasons.push(`High shot volume (avg ${tempo.toFixed(1)}/g).`); }
-    else if (tempo <= 9) { projected -= 0.5; reasons.push(`Low shot volume (avg ${tempo.toFixed(1)}/g).`); }
-  }
-  const homeAtt = findNum(home, ["attack", "xg"]);
-  const awayAtt = findNum(away, ["attack", "xg"]);
-  if (homeAtt !== undefined && awayAtt !== undefined) {
-    if (homeAtt + awayAtt >= 3.0) { projected += 0.4; reasons.push("Strong combined attacking output."); }
-  }
-
-  const dataPoints = [homeFor, awayFor, homeAg, awayAg, homeShots, awayShots].filter((v) => v !== undefined).length;
+  const dataPoints = h.games + a.games;
 
   const out: CornerPrediction[] = [];
-  // Over 6.5
-  {
-    const margin = projected - 6.5;
+  const make = (line: 6.5 | 7.5, projMin: number) => {
+    const margin = projected - line;
     let confidence = 50 + margin * 9;
-    if (dataPoints < 4) confidence -= 8;
-    confidence = Math.max(0, Math.min(96, confidence));
-    if (confidence >= 75 && projected >= 8) {
+    if (dataPoints < 8) confidence -= 8;
+    confidence = Math.max(0, Math.min(line === 6.5 ? 96 : 94, confidence));
+    if (confidence >= 65 && projected >= projMin) {
       out.push({
-        type: "over_6_5_corners",
-        selection: "Over 6.5 Corners",
+        type: line === 6.5 ? "over_6_5_corners" : "over_7_5_corners",
+        selection: `Over ${line} Corners`,
         projectedCorners: Math.round(projected * 100) / 100,
         confidence: Math.round(confidence * 10) / 10,
-        riskLevel: confidence >= 85 ? "low" : confidence >= 80 ? "medium" : "high",
+        riskLevel: confidence >= 85 ? "low" : confidence >= 75 ? "medium" : "high",
         reasons,
-        stats: { homeFor, awayFor, homeAg: hAg, awayAg: aAg, homeShots, awayShots },
+        stats: { home: h, away: a, projected },
       });
     }
-  }
-  // Over 7.5
-  {
-    const margin = projected - 7.5;
-    let confidence = 50 + margin * 9;
-    if (dataPoints < 4) confidence -= 8;
-    confidence = Math.max(0, Math.min(94, confidence));
-    if (confidence >= 75 && projected >= 9) {
-      out.push({
-        type: "over_7_5_corners",
-        selection: "Over 7.5 Corners",
-        projectedCorners: Math.round(projected * 100) / 100,
-        confidence: Math.round(confidence * 10) / 10,
-        riskLevel: confidence >= 85 ? "low" : confidence >= 80 ? "medium" : "high",
-        reasons,
-        stats: { homeFor, awayFor, homeAg: hAg, awayAg: aAg, homeShots, awayShots },
-      });
-    }
-  }
+  };
+  make(6.5, 7.5);
+  make(7.5, 8.5);
   return out;
 }
 
+// ---------------- Match outcomes ----------------
+
 export type MatchPrediction = {
-  type: "match_winner" | "double_chance" | "asian_handicap" | "over_1_5_goals";
+  type: "match_winner" | "double_chance" | "asian_handicap" | "over_1_5_goals" | "over_2_5_goals" | "btts";
   selection: string;
   confidence: number;
   riskLevel: "low" | "medium" | "high";
@@ -137,104 +118,176 @@ export type MatchPrediction = {
   stats: AnyObj;
 };
 
-export function predictMatchOutcomes(analysis: AnyObj): MatchPrediction[] {
-  const home = pickSide(analysis, "home");
-  const away = pickSide(analysis, "away");
+function dataVsRates(side: AnyObj | undefined, scope: "home" | "away" | "total") {
+  const s = side?.[scope];
+  if (!s) return undefined;
+  const count = n(s.count);
+  if (!count || count <= 0) return undefined;
+  const win = n(s.win) ?? 0, draw = n(s.draw) ?? 0, lose = n(s.lose) ?? 0;
+  const scored = n(s.scored), conceded = n(s.conceded);
+  return {
+    count,
+    winRate: win / count,
+    drawRate: draw / count,
+    loseRate: lose / count,
+    scoredAvg: scored !== undefined ? scored / count : undefined,
+    concededAvg: conceded !== undefined ? conceded / count : undefined,
+  };
+}
 
-  const homeGF = findNum(home, ["goalsfor", "goalsscored", "scored", "gpg"]);
-  const awayGF = findNum(away, ["goalsfor", "goalsscored", "scored", "gpg"]);
-  const homeGA = findNum(home, ["goalsagainst", "conceded"]);
-  const awayGA = findNum(away, ["goalsagainst", "conceded"]);
-  const homeWin = findNum(home, ["winrate", "wins%", "winpercentage", "winratehome"]);
-  const awayWin = findNum(away, ["winrate", "wins%", "winpercentage", "winrateaway"]);
-  const homeForm = findNum(home, ["form", "rating", "points"]);
-  const awayForm = findNum(away, ["form", "rating", "points"]);
+function fallbackFromRows(rows: Row[], teamId: string | undefined) {
+  let games = 0, scored = 0, conceded = 0, win = 0, draw = 0, lose = 0;
+  for (const r of rows) {
+    const hs = n(r[COL.scoreHome]), as = n(r[COL.scoreAway]);
+    if (hs === undefined || as === undefined) continue;
+    const isHome = teamId && r[COL.homeTeamId] === String(teamId);
+    const isAway = teamId && r[COL.awayTeamId] === String(teamId);
+    if (!isHome && !isAway) continue;
+    games++;
+    const my = isHome ? hs : as;
+    const opp = isHome ? as : hs;
+    scored += my; conceded += opp;
+    if (my > opp) win++; else if (my === opp) draw++; else lose++;
+  }
+  if (!games) return undefined;
+  return {
+    count: games,
+    winRate: win / games,
+    drawRate: draw / games,
+    loseRate: lose / games,
+    scoredAvg: scored / games,
+    concededAvg: conceded / games,
+  };
+}
 
-  if (homeGF === undefined || awayGF === undefined) return [];
+function poissonP(k: number, lambda: number) {
+  if (lambda <= 0) return k === 0 ? 1 : 0;
+  let f = 1;
+  for (let i = 2; i <= k; i++) f *= i;
+  return Math.exp(-lambda) * Math.pow(lambda, k) / f;
+}
+
+export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?: string): MatchPrediction[] {
+  const d = root(analysis);
+  const homeRows = parseRows(d.homeLastMatches);
+  const awayRows = parseRows(d.awayLastMatches);
+
+  const homeAtHome = dataVsRates(d.homeDataVs, "home") ?? fallbackFromRows(homeRows, homeId);
+  const awayAtAway = dataVsRates(d.awayDataVs, "away") ?? fallbackFromRows(awayRows, awayId);
+  if (!homeAtHome || !awayAtAway) return [];
+
+  // Blended outcome probabilities.
+  let pH = 0.6 * homeAtHome.winRate + 0.4 * (1 - awayAtAway.winRate - awayAtAway.drawRate);
+  let pA = 0.6 * awayAtAway.winRate + 0.4 * (1 - homeAtHome.winRate - homeAtHome.drawRate);
+  let pD = 0.5 * (homeAtHome.drawRate + awayAtAway.drawRate);
+  pH = Math.max(0.01, pH); pA = Math.max(0.01, pA); pD = Math.max(0.01, pD);
+  const total = pH + pA + pD;
+  pH /= total; pA /= total; pD /= total;
 
   const out: MatchPrediction[] = [];
+  const homeFav = pH >= pA;
 
-  const strength = (gf?: number, ga?: number, win?: number, form?: number) => {
-    let s = 0, n = 0;
-    if (gf !== undefined) { s += Math.min(gf, 3) / 3; n++; }
-    if (ga !== undefined) { s += (1 - Math.min(ga, 3) / 3); n++; }
-    if (win !== undefined) { s += Math.min(win, 100) / 100; n++; }
-    if (form !== undefined) { s += Math.min(form, 100) / 100; n++; }
-    return n ? s / n : 0.5;
-  };
-  const homeS = strength(homeGF, homeGA, homeWin, homeForm) + 0.05;
-  const awayS = strength(awayGF, awayGA, awayWin, awayForm);
-  const total = homeS + awayS || 1;
-  const homeProb = homeS / total;
-  const awayProb = awayS / total;
-  const drawProb = Math.max(0, 1 - homeProb - awayProb + 0.2);
-  const norm = homeProb + awayProb + drawProb;
-  const pH = homeProb / norm, pA = awayProb / norm, pD = drawProb / norm;
-
-  const winnerConfidence = Math.round(Math.max(pH, pA) * 100 * 10) / 10;
-  if (winnerConfidence >= 65) {
-    const homeWins = pH >= pA;
+  const winnerConf = Math.round(Math.max(pH, pA) * 1000) / 10;
+  if (winnerConf >= 65) {
     out.push({
       type: "match_winner",
-      selection: homeWins ? "Home Win" : "Away Win",
-      confidence: winnerConfidence,
-      riskLevel: winnerConfidence >= 85 ? "low" : "medium",
+      selection: homeFav ? "Home Win" : "Away Win",
+      confidence: winnerConf,
+      riskLevel: winnerConf >= 80 ? "low" : winnerConf >= 70 ? "medium" : "high",
       reasons: [
-        `Strength index — home ${(homeS * 100).toFixed(0)} vs away ${(awayS * 100).toFixed(0)}.`,
-        `Goals/g — H ${homeGF.toFixed(2)} A ${awayGF.toFixed(2)}.`,
+        `Home @ home: ${(homeAtHome.winRate * 100).toFixed(0)}% W / ${(homeAtHome.drawRate * 100).toFixed(0)}% D (${homeAtHome.count} g).`,
+        `Away @ away: ${(awayAtAway.winRate * 100).toFixed(0)}% W / ${(awayAtAway.drawRate * 100).toFixed(0)}% D (${awayAtAway.count} g).`,
       ],
-      stats: { pH, pA, pD, homeS, awayS },
-    });
-  }
-
-  const dcConf = Math.round((pH >= pA ? pH + pD : pA + pD) * 100 * 10) / 10;
-  if (dcConf >= 65) {
-    out.push({
-      type: "double_chance",
-      selection: pH >= pA ? "Home or Draw (1X)" : "Draw or Away (X2)",
-      confidence: Math.min(94, dcConf),
-      riskLevel: "low",
-      reasons: [`Combined probability ${dcConf.toFixed(1)}% based on form and scoring rates.`],
       stats: { pH, pA, pD },
     });
   }
 
-  const edge = Math.abs(homeS - awayS);
+  const dcConf = Math.round((homeFav ? pH + pD : pA + pD) * 1000) / 10;
+  if (dcConf >= 60) {
+    out.push({
+      type: "double_chance",
+      selection: homeFav ? "Home or Draw (1X)" : "Draw or Away (X2)",
+      confidence: Math.min(95, dcConf),
+      riskLevel: dcConf >= 80 ? "low" : "medium",
+      reasons: [`Combined probability ${dcConf.toFixed(1)}% from blended rates.`],
+      stats: { pH, pA, pD },
+    });
+  }
+
+  // Asian handicap based on edge.
+  const edge = Math.abs(pH - pA);
   if (edge >= 0.18) {
-    const ahConf = Math.round(Math.min(90, 70 + edge * 100) * 10) / 10;
-    if (ahConf >= 75) {
+    const ahConf = Math.round(Math.min(90, 65 + edge * 100) * 10) / 10;
+    if (ahConf >= 70) {
       out.push({
         type: "asian_handicap",
-        selection: pH >= pA ? "Home -0.25 AH" : "Away -0.25 AH",
+        selection: homeFav ? "Home -0.25 AH" : "Away -0.25 AH",
         confidence: ahConf,
-        riskLevel: ahConf >= 85 ? "low" : "medium",
-        reasons: [`Strength gap ${(edge * 100).toFixed(0)} pts justifies a quarter-line.`],
-        stats: { edge, homeS, awayS },
+        riskLevel: ahConf >= 82 ? "low" : "medium",
+        reasons: [`Probability gap ${(edge * 100).toFixed(0)} pts justifies a quarter-line.`],
+        stats: { edge, pH, pA },
       });
     }
   }
 
-  const expGoals = Math.min(5, homeGF * 0.85 + awayGF * 0.85 + (homeGA ?? 1) * 0.15 + (awayGA ?? 1) * 0.15);
-  const lambda = expGoals;
-  const p0 = Math.exp(-lambda);
-  const p1 = lambda * p0;
-  const pOver15 = Math.max(0, 1 - p0 - p1);
-  const ovConf = Math.round(pOver15 * 100 * 10) / 10;
-  if (ovConf >= 78) {
-    out.push({
-      type: "over_1_5_goals",
-      selection: "Over 1.5 Goals",
-      confidence: Math.min(95, ovConf),
-      riskLevel: ovConf >= 85 ? "low" : "medium",
-      reasons: [`Expected goals ${expGoals.toFixed(2)} (Poisson P(2+) = ${(pOver15 * 100).toFixed(0)}%).`],
-      stats: { expGoals, pOver15 },
-    });
+  // Goals — Poisson on scored/conceded.
+  const lamH = (homeAtHome.scoredAvg ?? 0) * 0.65 + (awayAtAway.concededAvg ?? 0) * 0.35;
+  const lamA = (awayAtAway.scoredAvg ?? 0) * 0.65 + (homeAtHome.concededAvg ?? 0) * 0.35;
+  if (lamH > 0 && lamA > 0) {
+    const p00 = poissonP(0, lamH) * poissonP(0, lamA);
+    const p10 = poissonP(1, lamH) * poissonP(0, lamA);
+    const p01 = poissonP(0, lamH) * poissonP(1, lamA);
+    const pOver15 = Math.max(0, 1 - p00 - p10 - p01);
+    const ov15 = Math.round(pOver15 * 1000) / 10;
+    if (ov15 >= 70) {
+      out.push({
+        type: "over_1_5_goals",
+        selection: "Over 1.5 Goals",
+        confidence: Math.min(96, ov15),
+        riskLevel: ov15 >= 85 ? "low" : "medium",
+        reasons: [`λ home ${lamH.toFixed(2)}, λ away ${lamA.toFixed(2)} — Poisson P(2+) = ${ov15.toFixed(1)}%.`],
+        stats: { lamH, lamA, pOver15 },
+      });
+    }
+
+    // Over 2.5: 1 - P(total <= 2)
+    let pUnder3 = 0;
+    for (let h = 0; h <= 2; h++) for (let a = 0; a <= 2 - h; a++) pUnder3 += poissonP(h, lamH) * poissonP(a, lamA);
+    const pOver25 = Math.max(0, 1 - pUnder3);
+    const ov25 = Math.round(pOver25 * 1000) / 10;
+    if (ov25 >= 60) {
+      out.push({
+        type: "over_2_5_goals",
+        selection: "Over 2.5 Goals",
+        confidence: Math.min(95, ov25),
+        riskLevel: ov25 >= 78 ? "low" : "medium",
+        reasons: [`λ total ${(lamH + lamA).toFixed(2)} — Poisson P(3+) = ${ov25.toFixed(1)}%.`],
+        stats: { lamH, lamA, pOver25 },
+      });
+    }
+
+    // BTTS
+    const pHomeScores = 1 - Math.exp(-lamH);
+    const pAwayScores = 1 - Math.exp(-lamA);
+    const pBtts = pHomeScores * pAwayScores;
+    const btts = Math.round(pBtts * 1000) / 10;
+    if (btts >= 60) {
+      out.push({
+        type: "btts",
+        selection: "Both Teams to Score",
+        confidence: Math.min(94, btts),
+        riskLevel: btts >= 75 ? "low" : "medium",
+        reasons: [`P(home scores) ${(pHomeScores * 100).toFixed(0)}%, P(away scores) ${(pAwayScores * 100).toFixed(0)}%.`],
+        stats: { pHomeScores, pAwayScores, pBtts },
+      });
+    }
   }
 
   return out;
 }
 
-/** Grade a stored prediction against an iSportsAPI result row. */
+// ---------------- Grading ----------------
+
 export function gradePrediction(
   predictionType: string,
   selection: string,
@@ -247,6 +300,8 @@ export function gradePrediction(
   if (predictionType === "over_7_5_corners") return cornersOk ? corners > 7.5 : null;
   if (hs == null || as == null) return null;
   if (predictionType === "over_1_5_goals") return hs + as > 1.5;
+  if (predictionType === "over_2_5_goals") return hs + as > 2.5;
+  if (predictionType === "btts") return hs > 0 && as > 0;
   if (predictionType === "match_winner") {
     if (selection.startsWith("Home")) return hs > as;
     return as > hs;
@@ -256,8 +311,6 @@ export function gradePrediction(
     return as >= hs;
   }
   if (predictionType === "asian_handicap") {
-    // Quarter-line favourite -0.25 — half stake on -0 (push if draw -> half loss),
-    // simplified here to: favourite must win by 1+ to fully win; draw = loss.
     if (selection.startsWith("Home")) return hs > as;
     return as > hs;
   }
