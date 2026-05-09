@@ -121,7 +121,7 @@ export function predictCorners(analysis: AnyObj, homeId?: string, awayId?: strin
 // ---------------- Match outcomes ----------------
 
 export type MatchPrediction = {
-  type: "match_winner" | "double_chance" | "asian_handicap" | "over_1_5_goals" | "over_2_5_goals" | "btts";
+  type: "match_winner" | "double_chance" | "asian_handicap" | "over_1_5_goals";
   selection: string;
   confidence: number;
   riskLevel: "low" | "medium" | "high";
