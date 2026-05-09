@@ -11,11 +11,21 @@ function key() {
 
 async function get<T = any>(path: string, params: Record<string, string>): Promise<T> {
   const qs = new URLSearchParams({ api_key: key(), ...params }).toString();
-  const res = await fetch(`${BASE}${path}?${qs}`, { method: "GET" });
-  if (!res.ok) throw new Error(`iSportsAPI ${path} failed: ${res.status}`);
-  const json = (await res.json()) as any;
+  const url = `${BASE}${path}?${qs}`;
+  const res = await fetch(url, { method: "GET" });
+  const text = await res.text();
+  if (!res.ok) {
+    console.error(`[iSportsAPI] ${path} HTTP ${res.status}: ${text.slice(0, 300)}`);
+    throw new Error(`iSportsAPI ${path} HTTP ${res.status}: ${text.slice(0, 200)}`);
+  }
+  let json: any;
+  try { json = JSON.parse(text); } catch {
+    console.error(`[iSportsAPI] ${path} non-JSON response: ${text.slice(0, 300)}`);
+    throw new Error(`iSportsAPI ${path} returned non-JSON response`);
+  }
   if (json.code !== 0 && json.code !== undefined) {
-    throw new Error(`iSportsAPI ${path} returned code=${json.code} msg=${json.message ?? ""}`);
+    console.error(`[iSportsAPI] ${path} code=${json.code} msg=${json.message ?? ""}`);
+    throw new Error(`iSportsAPI ${path} code=${json.code}: ${json.message ?? "unknown error"}`);
   }
   return json as T;
 }
@@ -51,7 +61,19 @@ export async function fetchScheduleByDate(date: string): Promise<ScheduleMatch[]
       fetched_at: new Date().toISOString(),
     });
   }
-  const list = Array.isArray(payload?.data) ? payload.data : [];
+  // Schedule payload shapes seen in the wild:
+  //   { code:0, data:[ ... ] }
+  //   { code:0, data:{ schedule:[ ... ] } }
+  //   { code:0, data:{ matches:[ ... ] } }
+  let list: any[] = [];
+  if (Array.isArray(payload?.data)) list = payload.data;
+  else if (Array.isArray(payload?.data?.schedule)) list = payload.data.schedule;
+  else if (Array.isArray(payload?.data?.matches)) list = payload.data.matches;
+  else if (Array.isArray(payload?.results)) list = payload.results;
+  if (!list.length) {
+    console.warn(`[iSportsAPI] schedule for ${date} returned 0 matches. Top-level keys:`,
+      Object.keys(payload ?? {}), "data keys:", payload?.data && typeof payload.data === "object" ? Object.keys(payload.data) : typeof payload?.data);
+  }
   return list
     .map((m: any) => ({
       matchId: String(m.matchId ?? m.id ?? ""),
