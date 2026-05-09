@@ -172,7 +172,7 @@ export function predictMatchOutcomes(analysis: AnyObj): MatchPrediction[] {
   const pH = homeProb / norm, pA = awayProb / norm, pD = drawProb / norm;
 
   const winnerConfidence = Math.round(Math.max(pH, pA) * 100 * 10) / 10;
-  if (winnerConfidence >= 75) {
+  if (winnerConfidence >= 65) {
     const homeWins = pH >= pA;
     out.push({
       type: "match_winner",
@@ -188,7 +188,7 @@ export function predictMatchOutcomes(analysis: AnyObj): MatchPrediction[] {
   }
 
   const dcConf = Math.round((pH >= pA ? pH + pD : pA + pD) * 100 * 10) / 10;
-  if (dcConf >= 78) {
+  if (dcConf >= 65) {
     out.push({
       type: "double_chance",
       selection: pH >= pA ? "Home or Draw (1X)" : "Draw or Away (X2)",
