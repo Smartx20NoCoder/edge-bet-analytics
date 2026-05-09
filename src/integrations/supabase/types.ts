@@ -14,7 +14,167 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      analyses: {
+        Row: {
+          avg_confidence: number | null
+          created_at: string
+          id: string
+          league_id: string | null
+          league_name: string | null
+          matches_analyzed: number
+          notes: string | null
+          predictions_generated: number
+          scan_date: string
+          status: string
+        }
+        Insert: {
+          avg_confidence?: number | null
+          created_at?: string
+          id?: string
+          league_id?: string | null
+          league_name?: string | null
+          matches_analyzed?: number
+          notes?: string | null
+          predictions_generated?: number
+          scan_date?: string
+          status?: string
+        }
+        Update: {
+          avg_confidence?: number | null
+          created_at?: string
+          id?: string
+          league_id?: string | null
+          league_name?: string | null
+          matches_analyzed?: number
+          notes?: string | null
+          predictions_generated?: number
+          scan_date?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      analysis_cache: {
+        Row: {
+          fetched_at: string
+          match_id: string
+          raw: Json
+        }
+        Insert: {
+          fetched_at?: string
+          match_id: string
+          raw: Json
+        }
+        Update: {
+          fetched_at?: string
+          match_id?: string
+          raw?: Json
+        }
+        Relationships: []
+      }
+      fixtures_cache: {
+        Row: {
+          away_team: string | null
+          fetched_at: string
+          home_team: string | null
+          kickoff: string | null
+          league_id: string | null
+          league_name: string | null
+          match_id: string
+          raw: Json
+        }
+        Insert: {
+          away_team?: string | null
+          fetched_at?: string
+          home_team?: string | null
+          kickoff?: string | null
+          league_id?: string | null
+          league_name?: string | null
+          match_id: string
+          raw: Json
+        }
+        Update: {
+          away_team?: string | null
+          fetched_at?: string
+          home_team?: string | null
+          kickoff?: string | null
+          league_id?: string | null
+          league_name?: string | null
+          match_id?: string
+          raw?: Json
+        }
+        Relationships: []
+      }
+      predictions: {
+        Row: {
+          analysis_id: string | null
+          away_team: string
+          confidence: number
+          created_at: string
+          engine: string
+          home_team: string
+          id: string
+          kickoff: string | null
+          league_id: string | null
+          league_name: string | null
+          match_id: string | null
+          prediction_type: string
+          projected_corners: number | null
+          reasons: Json
+          recommendation: string | null
+          risk_level: string
+          selection: string
+          stats: Json
+        }
+        Insert: {
+          analysis_id?: string | null
+          away_team: string
+          confidence: number
+          created_at?: string
+          engine: string
+          home_team: string
+          id?: string
+          kickoff?: string | null
+          league_id?: string | null
+          league_name?: string | null
+          match_id?: string | null
+          prediction_type: string
+          projected_corners?: number | null
+          reasons?: Json
+          recommendation?: string | null
+          risk_level?: string
+          selection: string
+          stats?: Json
+        }
+        Update: {
+          analysis_id?: string | null
+          away_team?: string
+          confidence?: number
+          created_at?: string
+          engine?: string
+          home_team?: string
+          id?: string
+          kickoff?: string | null
+          league_id?: string | null
+          league_name?: string | null
+          match_id?: string | null
+          prediction_type?: string
+          projected_corners?: number | null
+          reasons?: Json
+          recommendation?: string | null
+          risk_level?: string
+          selection?: string
+          stats?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "predictions_analysis_id_fkey"
+            columns: ["analysis_id"]
+            isOneToOne: false
+            referencedRelation: "analyses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
