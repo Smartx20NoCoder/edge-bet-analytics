@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { fetchMatchAnalysis, fetchResultsByDate, fetchScheduleByDate } from "./isports.server";
-import { gradePrediction, predictCorners, predictMatchOutcomes } from "./predictions.server";
+import { gradePrediction, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "./predictions.server";
 
 const BLOCKED_KEYWORDS = ["friendly", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women"];
 
@@ -34,6 +34,7 @@ const RunInput = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), // YYYY-MM-DD, defaults to today (UTC)
   timeframeHours: z.number().int().min(1).max(48).optional(), // upcoming window
   maxMatches: z.number().int().min(1).max(40).optional(),
+  maxPicks: z.number().int().min(1).max(10).optional(),
   minOdds: z.number().min(1).max(10).optional(), // implied-odds floor (1/p)
   trustedOnly: z.boolean().optional(),
   refresh: z.boolean().optional(), // force re-fetch of analysis cache
@@ -45,6 +46,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
     const date = data.date ?? new Date().toISOString().slice(0, 10);
     const timeframeHours = data.timeframeHours ?? 6;
     const maxMatches = data.maxMatches ?? 15;
+    const maxPicks = data.maxPicks ?? 3;
     const minOdds = data.minOdds ?? 1.0;
     const trustedOnly = data.trustedOnly ?? true;
 
@@ -146,8 +148,12 @@ export const runAnalysis = createServerFn({ method: "POST" })
       }
     }
 
-    // Apply implied-odds filter (odds = 100/confidence)
-    const finalPreds = predictions.filter((p) => 100 / Number(p.confidence) >= minOdds);
+    // Apply threshold + implied-odds filter, then keep only the top maxPicks overall.
+    const finalPreds = predictions
+      .filter((p) => meetsConfidenceThreshold(p.prediction_type, Number(p.confidence)))
+      .filter((p) => 100 / Number(p.confidence) >= minOdds)
+      .sort((a, b) => Number(b.confidence) - Number(a.confidence))
+      .slice(0, maxPicks);
 
     if (finalPreds.length) {
       await supabaseAdmin.from("predictions").insert(finalPreds);
