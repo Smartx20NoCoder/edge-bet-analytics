@@ -60,17 +60,17 @@ export const runAnalysis = createServerFn({ method: "POST" })
       .sort((a, b) => a.matchTime - b.matchTime)
       .slice(0, maxMatches);
 
-    const leagueName = candidates[0]?.leagueName ?? null;
+    const scanStartedAt = new Date().toISOString();
 
     const { data: analysisRow, error: aErr } = await supabaseAdmin
       .from("analyses")
       .insert({
         league_id: null,
-        league_name: leagueName,
+        league_name: null,
         matches_analyzed: candidates.length,
         predictions_generated: 0,
         status: "running",
-        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly }),
+        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt }),
       })
       .select()
       .single();
@@ -156,12 +156,16 @@ export const runAnalysis = createServerFn({ method: "POST" })
     const avg = finalPreds.length
       ? finalPreds.reduce((s, p) => s + Number(p.confidence), 0) / finalPreds.length
       : null;
+    const distinctLeagues = new Set(
+      candidates.map((c) => c.leagueName).filter(Boolean) as string[],
+    ).size;
     await supabaseAdmin
       .from("analyses")
       .update({
         predictions_generated: finalPreds.length,
         avg_confidence: avg ? Math.round(avg * 100) / 100 : null,
         status: "completed",
+        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt, distinctLeagues }),
       })
       .eq("id", analysisRow.id);
 
