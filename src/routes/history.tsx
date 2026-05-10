@@ -42,10 +42,23 @@ const TYPE_FILTERS = [
 function HistoryPage() {
   const fa = useServerFn(getAnalyses);
   const fp = useServerFn(getPredictions);
+  const updateAll = useServerFn(updateAllPendingResults);
+  const qc = useQueryClient();
   const aQ = useQuery({ queryKey: ["analyses"], queryFn: () => fa() });
   const [openId, setOpenId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
+
+  const updateMut = useMutation({
+    mutationFn: () => updateAll(),
+    onSuccess: (r: any) => {
+      const msg = `Updated ${r.updated} result${r.updated === 1 ? "" : "s"} across ${r.dates} date${r.dates === 1 ? "" : "s"}. ${r.stillPending} match${r.stillPending === 1 ? "" : "es"} still pending.`;
+      if (r.updated === 0) toast.warning(msg);
+      else toast.success(msg);
+      qc.invalidateQueries({ queryKey: ["preds"] });
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Update failed"),
+  });
 
   const list = useMemo(() => {
     const items = aQ.data?.analyses ?? [];
