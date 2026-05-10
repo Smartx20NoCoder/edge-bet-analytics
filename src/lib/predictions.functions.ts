@@ -53,6 +53,9 @@ export const runAnalysis = createServerFn({ method: "POST" })
     const maxPicks = data.maxPicks ?? 3;
     const minOdds = data.minOdds ?? 1.0;
     const trustedOnly = data.trustedOnly ?? true;
+    const betType = data.betType ?? "all";
+    const runCorners = betType === "all" || CORNER_TYPES.has(betType);
+    const runMatch = betType === "all" || MATCH_TYPES.has(betType);
 
     const all = await fetchScheduleByDate(date);
     const now = Date.now();
