@@ -105,8 +105,8 @@ export const runAnalysis = createServerFn({ method: "POST" })
           fetched_at: new Date().toISOString(),
         });
 
-        const corners = predictCorners(analysis, m.homeId, m.awayId);
-        const matchPreds = predictMatchOutcomes(analysis, m.homeId, m.awayId);
+        const corners = runCorners ? predictCorners(analysis, m.homeId, m.awayId) : [];
+        const matchPreds = runMatch ? predictMatchOutcomes(analysis, m.homeId, m.awayId) : [];
 
         const all: any[] = [];
         for (const c of corners) {
@@ -135,9 +135,9 @@ export const runAnalysis = createServerFn({ method: "POST" })
           });
         }
 
-        // One best pick per match.
-        all.sort((a, b) => Number(b.confidence) - Number(a.confidence));
-        const best = all[0];
+        const filteredAll = betType === "all" ? all : all.filter((x) => x.prediction_type === betType);
+        filteredAll.sort((a, b) => Number(b.confidence) - Number(a.confidence));
+        const best = filteredAll[0];
         if (best) {
           predictions.push({
             ...best,
