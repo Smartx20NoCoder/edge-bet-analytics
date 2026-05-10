@@ -119,39 +119,64 @@ export type ResultRow = {
   status: string | null;
 };
 
-/** FT results by date. iSportsAPI returns finished match data. */
+/** FT results by date. The user's plan doesn't include /results, so we read
+ *  finished matches out of the /schedule payload (which includes scores and
+ *  status for completed games). Reuses the __schedule_${date} cache entry. */
 export async function fetchResultsByDate(date: string): Promise<ResultRow[]> {
-  const payload = await get<any>("/results", { date });
+  const cacheKey = `__schedule_${date}`;
+  let payload: any;
+  const { data: cached } = await supabaseAdmin
+    .from("analysis_cache")
+    .select("raw, fetched_at")
+    .eq("match_id", cacheKey)
+    .maybeSingle();
+  if (cached && Date.now() - new Date(cached.fetched_at).getTime() < 30 * 60 * 1000) {
+    payload = cached.raw;
+  } else {
+    payload = await get<any>("/schedule", { date });
+    await supabaseAdmin.from("analysis_cache").upsert({
+      match_id: cacheKey,
+      raw: payload,
+      fetched_at: new Date().toISOString(),
+    });
+  }
+
   let list: any[] = [];
   if (Array.isArray(payload?.data)) list = payload.data;
-  else if (Array.isArray(payload?.data?.list)) list = payload.data.list;
-  else if (Array.isArray(payload?.data?.results)) list = payload.data.results;
+  else if (Array.isArray(payload?.data?.schedule)) list = payload.data.schedule;
   else if (Array.isArray(payload?.data?.matches)) list = payload.data.matches;
+  else if (Array.isArray(payload?.data?.list)) list = payload.data.list;
   else if (Array.isArray(payload?.results)) list = payload.results;
   else if (Array.isArray(payload?.list)) list = payload.list;
-  console.log(`[iSportsAPI] /results ${date}: top-level keys=${JSON.stringify(Object.keys(payload ?? {}))} data keys=${payload?.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? JSON.stringify(Object.keys(payload.data)) : Array.isArray(payload?.data) ? "array" : typeof payload?.data} count=${list.length}`);
+
+  console.log(`[iSportsAPI] results-from-schedule ${date}: count=${list.length}`);
   if (list.length && list[0]) {
-    console.log(`[iSportsAPI] /results sample row keys=${JSON.stringify(Object.keys(list[0]))}`);
+    console.log(`[iSportsAPI] schedule sample row keys=${JSON.stringify(Object.keys(list[0]))}`);
   }
 
   // Status detection: iSports uses numeric status codes; 3 = finished. Also accept string variants.
   const isFinished = (s: any): boolean => {
     if (s == null) return false;
-    if (typeof s === "number") return s === 3 || s === -1; // -1 sometimes used for finished/abandoned
+    if (typeof s === "number") return s === 3 || s === -1;
     const str = String(s).toUpperCase();
-    return str === "3" || str === "FT" || str === "FINISHED" || str === "FULL_TIME" || str === "FULL-TIME" || str === "AET" || str === "PEN";
+    return str === "3" || str === "-1" || str === "FT" || str === "FINISHED" || str === "FULL_TIME" || str === "FULL-TIME" || str === "AET" || str === "PEN";
   };
 
+  const num = (v: any): number | null => (v == null || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null);
+
   return list
-    .map((m: any) => ({
-      matchId: String(m.matchId ?? m.id ?? m.match_id ?? ""),
-      homeScore: m.homeScore != null ? Number(m.homeScore) : null,
-      awayScore: m.awayScore != null ? Number(m.awayScore) : null,
-      homeCorners: m.homeCorner != null ? Number(m.homeCorner) : m.homeCorners != null ? Number(m.homeCorners) : null,
-      awayCorners: m.awayCorner != null ? Number(m.awayCorner) : m.awayCorners != null ? Number(m.awayCorners) : null,
-      status: m.status != null ? String(m.status) : null,
-      _rawStatus: m.status,
-    }))
+    .map((m: any) => {
+      const rawStatus = m.status ?? m.matchStatus ?? m.state;
+      return {
+        matchId: String(m.matchId ?? m.id ?? m.match_id ?? ""),
+        homeScore: num(m.homeScore ?? m.homeFtScore ?? m.homeGoals ?? m.home_score ?? (Array.isArray(m.score) ? m.score[0] : undefined)),
+        awayScore: num(m.awayScore ?? m.awayFtScore ?? m.awayGoals ?? m.away_score ?? (Array.isArray(m.score) ? m.score[1] : undefined)),
+        homeCorners: num(m.homeCorner ?? m.homeCorners ?? m.home_corner),
+        awayCorners: num(m.awayCorner ?? m.awayCorners ?? m.away_corner),
+        status: rawStatus != null ? String(rawStatus) : null,
+        _rawStatus: rawStatus,
+      };
+    })
     .filter((r: any) => r.matchId && isFinished(r._rawStatus))
     .map(({ _rawStatus, ...r }: any) => r);
 }
