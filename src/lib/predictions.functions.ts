@@ -279,6 +279,19 @@ export const checkApiStatus = createServerFn({ method: "GET" }).handler(async ()
   return { hasKey, live: hasKey, error: hasKey ? null : "no key" };
 });
 
+export const getApiUsageToday = createServerFn({ method: "GET" }).handler(async () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const { count, error } = await supabaseAdmin
+    .from("api_usage")
+    .select("*", { count: "exact", head: true })
+    .eq("date", today);
+  if (error) {
+    console.warn(`[getApiUsageToday] ${error.message}`);
+    return { count: 0, limit: 200 };
+  }
+  return { count: count ?? 0, limit: 200 };
+});
+
 export const updateResults = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => z.object({ analysisId: z.string() }).parse(d))
   .handler(async ({ data }) => {
