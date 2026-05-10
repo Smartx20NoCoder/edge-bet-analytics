@@ -111,8 +111,13 @@ function HistoryItem({ a, open, onToggle, fp, typeFilter }: any) {
   });
   const m = useMutation({
     mutationFn: () => update({ data: { analysisId: a.id } }),
-    onSuccess: (r) => {
-      toast.success(`Updated ${r.updated} result${r.updated === 1 ? "" : "s"}`);
+    onSuccess: (r: any) => {
+      const parts = [`Updated ${r.updated} result${r.updated === 1 ? "" : "s"}.`];
+      if (r.noResultFound) parts.push(`${r.noResultFound} match${r.noResultFound === 1 ? "" : "es"} not yet finished.`);
+      if (r.skipped) parts.push(`${r.skipped} skipped (no score).`);
+      const msg = parts.join(" ");
+      if (r.updated === 0) toast.warning(msg || "No completed matches found yet for these predictions.");
+      else toast.success(msg);
       qc.invalidateQueries({ queryKey: ["preds"] });
     },
     onError: (e: any) => toast.error(e?.message ?? "Update failed"),

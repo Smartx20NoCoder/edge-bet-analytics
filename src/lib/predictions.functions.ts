@@ -287,7 +287,7 @@ export const updateResults = createServerFn({ method: "POST" })
       .select("*")
       .eq("analysis_id", data.analysisId);
     if (error) throw new Error(error.message);
-    if (!preds || !preds.length) return { updated: 0 };
+    if (!preds || !preds.length) return { updated: 0, skipped: 0, noResultFound: 0 };
 
     // Group by date for efficient batched results fetch
     const byDate: Record<string, any[]> = {};
@@ -298,12 +298,18 @@ export const updateResults = createServerFn({ method: "POST" })
     }
 
     let updated = 0;
+    let skipped = 0;
+    let noResultFound = 0;
+    let totalResults = 0;
     for (const [date, group] of Object.entries(byDate)) {
       const results = await fetchResultsByDate(date);
+      totalResults += results.length;
       const map = new Map(results.map((r) => [r.matchId, r]));
+      console.log(`[updateResults] date=${date} predictions=${group.length} finishedResults=${results.length}`);
       for (const p of group) {
         const r = map.get(String(p.match_id));
-        if (!r || (r.homeScore == null && r.awayScore == null)) continue;
+        if (!r) { noResultFound++; continue; }
+        if (r.homeScore == null && r.awayScore == null) { skipped++; continue; }
         const correct = gradePrediction(p.prediction_type, p.selection, r);
         const totalC = (r.homeCorners ?? 0) + (r.awayCorners ?? 0);
         await supabaseAdmin
@@ -320,5 +326,6 @@ export const updateResults = createServerFn({ method: "POST" })
         updated++;
       }
     }
-    return { updated };
+    console.log(`[updateResults] analysisId=${data.analysisId} totalPreds=${preds.length} totalFinishedResults=${totalResults} updated=${updated} skipped=${skipped} noResultFound=${noResultFound}`);
+    return { updated, skipped, noResultFound };
   });
