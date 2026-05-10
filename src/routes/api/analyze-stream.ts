@@ -98,7 +98,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   matches_analyzed: candidates.length,
                   predictions_generated: 0,
                   status: "running",
-                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt }),
+                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt }),
                 })
                 .select()
                 .single();
@@ -192,7 +192,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   predictions_generated: finalPreds.length,
                   avg_confidence: avg ? Math.round(avg * 100) / 100 : null,
                   status: "completed",
-                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt, distinctLeagues }),
+                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues }),
                 })
                 .eq("id", analysisRow.id);
 
