@@ -30,6 +30,13 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const maxPicks = Math.max(1, Math.min(10, Number(url.searchParams.get("maxPicks") ?? 3)));
         const trustedOnly = url.searchParams.get("trustedOnly") !== "false";
         const refresh = url.searchParams.get("refresh") === "true";
+        const VALID_BET_TYPES = ["all","match_winner","double_chance","asian_handicap","over_1_5_goals","over_6_5_corners","over_7_5_corners"] as const;
+        const rawBet = (url.searchParams.get("betType") ?? "all").toLowerCase();
+        const betType = (VALID_BET_TYPES as readonly string[]).includes(rawBet) ? rawBet : "all";
+        const cornerTypes = new Set(["over_6_5_corners","over_7_5_corners"]);
+        const matchTypes = new Set(["match_winner","double_chance","asian_handicap","over_1_5_goals"]);
+        const runCorners = betType === "all" || cornerTypes.has(betType);
+        const runMatch = betType === "all" || matchTypes.has(betType);
 
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
