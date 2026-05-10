@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getAnalyses, getPredictions, updateResults } from "@/lib/predictions.functions";
+import { getAnalyses, getPredictions, updateAllPendingResults } from "@/lib/predictions.functions";
 import { useState, useMemo } from "react";
 import { ChevronDown, ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
 import { PredictionCard, type Prediction } from "@/components/PredictionCard";
