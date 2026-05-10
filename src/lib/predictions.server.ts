@@ -351,7 +351,7 @@ export function gradePrediction(
 
 // Confidence thresholds enforced before saving any prediction.
 export const CONFIDENCE_THRESHOLDS: Record<string, number> = {
-  match_winner: 65,
+  match_winner: 57,
   double_chance: 75,
   asian_handicap: 75,
   over_1_5_goals: 75,
