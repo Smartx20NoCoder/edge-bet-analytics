@@ -200,30 +200,46 @@ export const getAnalyses = createServerFn({ method: "POST" })
       .limit(100);
     if (error) throw new Error(error.message);
     let analyses: any[] = rows ?? [];
-    if (data.engine) {
-      const ids = analyses.map((a) => a.id);
-      if (ids.length) {
-        const { data: preds } = await supabaseAdmin
-          .from("predictions")
-          .select("analysis_id, confidence")
-          .eq("engine", data.engine)
-          .in("analysis_id", ids);
-        const counts: Record<string, { n: number; sum: number }> = {};
-        for (const p of preds ?? []) {
-          const k = (p as any).analysis_id;
-          counts[k] ??= { n: 0, sum: 0 };
-          counts[k].n++;
-          counts[k].sum += Number((p as any).confidence);
-        }
+    const ids = analyses.map((a) => a.id);
+    if (ids.length) {
+      let pq = supabaseAdmin
+        .from("predictions")
+        .select("analysis_id, confidence, is_correct, engine")
+        .in("analysis_id", ids);
+      if (data.engine) pq = pq.eq("engine", data.engine);
+      const { data: preds } = await pq;
+      const counts: Record<string, { n: number; sum: number; won: number; lost: number; pending: number }> = {};
+      for (const p of preds ?? []) {
+        const k = (p as any).analysis_id;
+        counts[k] ??= { n: 0, sum: 0, won: 0, lost: 0, pending: 0 };
+        counts[k].n++;
+        counts[k].sum += Number((p as any).confidence);
+        const ic = (p as any).is_correct;
+        if (ic === true) counts[k].won++;
+        else if (ic === false) counts[k].lost++;
+        else counts[k].pending++;
+      }
+      if (data.engine) {
         analyses = analyses
           .filter((a) => counts[a.id])
           .map((a) => ({
             ...a,
             predictions_generated: counts[a.id].n,
             avg_confidence: Math.round((counts[a.id].sum / counts[a.id].n) * 10) / 10,
+            score_total: counts[a.id].n,
+            score_won: counts[a.id].won,
+            score_pending: counts[a.id].pending,
           }));
       } else {
-        analyses = [];
+        analyses = analyses.map((a) => {
+          const c = counts[a.id];
+          return {
+            ...a,
+            score_total: c?.n ?? 0,
+            score_won: c?.won ?? 0,
+            score_pending: c?.pending ?? 0,
+          };
+        });
       }
     }
     return { analyses };
