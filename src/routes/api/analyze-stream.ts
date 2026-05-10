@@ -30,6 +30,13 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const maxPicks = Math.max(1, Math.min(10, Number(url.searchParams.get("maxPicks") ?? 3)));
         const trustedOnly = url.searchParams.get("trustedOnly") !== "false";
         const refresh = url.searchParams.get("refresh") === "true";
+        const VALID_BET_TYPES = ["all","match_winner","double_chance","asian_handicap","over_1_5_goals","over_6_5_corners","over_7_5_corners"] as const;
+        const rawBet = (url.searchParams.get("betType") ?? "all").toLowerCase();
+        const betType = (VALID_BET_TYPES as readonly string[]).includes(rawBet) ? rawBet : "all";
+        const cornerTypes = new Set(["over_6_5_corners","over_7_5_corners"]);
+        const matchTypes = new Set(["match_winner","double_chance","asian_handicap","over_1_5_goals"]);
+        const runCorners = betType === "all" || cornerTypes.has(betType);
+        const runMatch = betType === "all" || matchTypes.has(betType);
 
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
@@ -91,7 +98,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   matches_analyzed: candidates.length,
                   predictions_generated: 0,
                   status: "running",
-                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt }),
+                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt }),
                 })
                 .select()
                 .single();
@@ -126,8 +133,8 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     raw: m.raw,
                     fetched_at: new Date().toISOString(),
                   });
-                  const corners = predictCorners(analysis, m.homeId, m.awayId);
-                  const matchPreds = predictMatchOutcomes(analysis, m.homeId, m.awayId);
+                  const corners = runCorners ? predictCorners(analysis, m.homeId, m.awayId) : [];
+                  const matchPreds = runMatch ? predictMatchOutcomes(analysis, m.homeId, m.awayId) : [];
                   const collected: any[] = [];
                   for (const c of corners) collected.push({
                     engine: "corners", prediction_type: c.type, selection: c.selection,
@@ -140,9 +147,10 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     confidence: p.confidence, risk_level: p.riskLevel, reasons: p.reasons,
                     stats: p.stats, recommendation: `Lean ${p.selection} (${p.confidence}% model confidence).`,
                   });
-                  // One best pick per match: pick highest confidence only.
-                  collected.sort((a, b) => Number(b.confidence) - Number(a.confidence));
-                  const best = collected[0];
+                  // Restrict to selected bet type if a specific one was chosen.
+                  const filtered = betType === "all" ? collected : collected.filter((x) => x.prediction_type === betType);
+                  filtered.sort((a, b) => Number(b.confidence) - Number(a.confidence));
+                  const best = filtered[0];
                   if (best) {
                     predictions.push({
                       ...best, analysis_id: analysisRow.id, match_id: m.matchId,
@@ -184,7 +192,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   predictions_generated: finalPreds.length,
                   avg_confidence: avg ? Math.round(avg * 100) / 100 : null,
                   status: "completed",
-                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt, distinctLeagues }),
+                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues }),
                 })
                 .eq("id", analysisRow.id);
 

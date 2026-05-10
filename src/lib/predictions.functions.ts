@@ -38,7 +38,11 @@ const RunInput = z.object({
   minOdds: z.number().min(1).max(10).optional(), // implied-odds floor (1/p)
   trustedOnly: z.boolean().optional(),
   refresh: z.boolean().optional(), // force re-fetch of analysis cache
+  betType: z.enum(["all","match_winner","double_chance","asian_handicap","over_1_5_goals","over_6_5_corners","over_7_5_corners"]).optional(),
 });
+
+const CORNER_TYPES = new Set(["over_6_5_corners","over_7_5_corners"]);
+const MATCH_TYPES = new Set(["match_winner","double_chance","asian_handicap","over_1_5_goals"]);
 
 export const runAnalysis = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RunInput.parse(d ?? {}))
@@ -49,6 +53,9 @@ export const runAnalysis = createServerFn({ method: "POST" })
     const maxPicks = data.maxPicks ?? 3;
     const minOdds = data.minOdds ?? 1.0;
     const trustedOnly = data.trustedOnly ?? true;
+    const betType = data.betType ?? "all";
+    const runCorners = betType === "all" || CORNER_TYPES.has(betType);
+    const runMatch = betType === "all" || MATCH_TYPES.has(betType);
 
     const all = await fetchScheduleByDate(date);
     const now = Date.now();
@@ -98,8 +105,8 @@ export const runAnalysis = createServerFn({ method: "POST" })
           fetched_at: new Date().toISOString(),
         });
 
-        const corners = predictCorners(analysis, m.homeId, m.awayId);
-        const matchPreds = predictMatchOutcomes(analysis, m.homeId, m.awayId);
+        const corners = runCorners ? predictCorners(analysis, m.homeId, m.awayId) : [];
+        const matchPreds = runMatch ? predictMatchOutcomes(analysis, m.homeId, m.awayId) : [];
 
         const all: any[] = [];
         for (const c of corners) {
@@ -128,9 +135,9 @@ export const runAnalysis = createServerFn({ method: "POST" })
           });
         }
 
-        // One best pick per match.
-        all.sort((a, b) => Number(b.confidence) - Number(a.confidence));
-        const best = all[0];
+        const filteredAll = betType === "all" ? all : all.filter((x) => x.prediction_type === betType);
+        filteredAll.sort((a, b) => Number(b.confidence) - Number(a.confidence));
+        const best = filteredAll[0];
         if (best) {
           predictions.push({
             ...best,

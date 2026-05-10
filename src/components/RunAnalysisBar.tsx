@@ -15,6 +15,16 @@ const TIMEFRAMES = [
   { hours: 24, label: "Next 24h" },
 ];
 
+const BET_TYPES = [
+  { id: "all", label: "All" },
+  { id: "match_winner", label: "Match Winner" },
+  { id: "double_chance", label: "Double Chance" },
+  { id: "asian_handicap", label: "Asian Handicap" },
+  { id: "over_1_5_goals", label: "Over 1.5 Goals" },
+  { id: "over_6_5_corners", label: "Over 6.5 Corners" },
+  { id: "over_7_5_corners", label: "Over 7.5 Corners" },
+] as const;
+
 type LogEntry = { kind: "status" | "match" | "match_done" | "match_error" | "done" | "error"; text: string; at: number };
 
 function todayISO() {
@@ -29,6 +39,7 @@ export function RunAnalysisBar() {
   const [trustedOnly, setTrustedOnly] = useState(true);
   const [refresh, setRefresh] = useState(false);
   const [maxPicks, setMaxPicks] = useState(3);
+  const [betType, setBetType] = useState<string>("all");
 
   const [open, setOpen] = useState(false);
   const [running, setRunning] = useState(false);
@@ -73,7 +84,7 @@ export function RunAnalysisBar() {
     const params = new URLSearchParams({
       date, timeframeHours: String(timeframeHours), maxMatches: String(maxMatches),
       minOdds: String(minOdds), trustedOnly: String(trustedOnly), refresh: String(refresh),
-      maxPicks: String(maxPicks),
+      maxPicks: String(maxPicks), betType,
     });
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -158,6 +169,22 @@ export function RunAnalysisBar() {
 
   return (
     <div className="glass rounded-xl p-4 space-y-4">
+      <div>
+        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground mb-2">
+          <Target className="h-3 w-3" /> Bet Type
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {BET_TYPES.map((b) => (
+            <button
+              key={b.id}
+              onClick={() => setBetType(b.id)}
+              className={`px-3 h-8 rounded-md text-xs border transition-colors ${betType === b.id ? "bg-neon/15 border-neon/50 text-neon" : "border-border text-muted-foreground hover:text-foreground"}`}
+            >
+              {b.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <Field label="Date" Icon={Calendar}>
           <input
