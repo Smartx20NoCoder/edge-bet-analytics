@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { RunAnalysisBar } from "@/components/RunAnalysisBar";
 import { ScanGroupedList } from "@/components/ScanGroupedList";
 import { useState } from "react";
 
@@ -27,7 +26,7 @@ function MatchesPage() {
     <section className="mx-auto max-w-7xl px-4 sm:px-6 py-10">
       <h1 className="text-3xl font-bold">Match Outcome <span className="text-gold">Engine</span></h1>
       <p className="text-sm text-muted-foreground mt-1">Form, xG, momentum, and league-strength weighted predictions · grouped by scan.</p>
-      <div className="mt-6"><RunAnalysisBar /></div>
+      <p className="text-xs text-muted-foreground mt-2 italic">Run a scan from the Dashboard to add new picks.</p>
       <div className="mt-6 flex flex-wrap gap-1.5">
         {FILTERS.map((f) => (
           <button key={f.id} onClick={() => setFilter(f.id)}
