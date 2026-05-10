@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -45,6 +45,18 @@ export function RunAnalysisBar() {
     queryFn: () => fetchUsage(),
     refetchInterval: 60_000,
   });
+
+  const failoverNotifiedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const f = usage.data?.failoverAt;
+    if (f && failoverNotifiedRef.current !== f) {
+      failoverNotifiedRef.current = f;
+      toast.warning("API Key 1 exhausted — switched to Key 2", {
+        description: "Counter has been reset to track usage on the new key.",
+        duration: 8000,
+      });
+    }
+  }, [usage.data?.failoverAt]);
 
   const append = (e: LogEntry) => {
     setLog((prev) => [...prev, e]);
@@ -218,7 +230,7 @@ export function RunAnalysisBar() {
               : "border-neon/30 text-neon bg-neon/5"
           }`} title="iSports API calls today">
             <Radio className="h-3 w-3" />
-            {usage.data?.count ?? "—"}/{usage.data?.limit ?? 200}
+            {usage.data?.count ?? "—"}/{usage.data?.limit ?? 200} (Key {usage.data?.activeKey ?? 1})
           </span>
           <Button onClick={start} disabled={running} className="bg-neon text-neon-foreground hover:bg-neon/90">
             {running ? <Loader2 className="animate-spin" /> : <RefreshCw />}
