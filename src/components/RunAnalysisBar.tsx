@@ -39,6 +39,13 @@ export function RunAnalysisBar() {
   const abortRef = useRef<AbortController | null>(null);
   const qc = useQueryClient();
 
+  const fetchUsage = useServerFn(getApiUsageToday);
+  const usage = useQuery({
+    queryKey: ["api-usage-today"],
+    queryFn: () => fetchUsage(),
+    refetchInterval: 60_000,
+  });
+
   const append = (e: LogEntry) => {
     setLog((prev) => [...prev, e]);
     queueMicrotask(() => logEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }));
