@@ -139,8 +139,11 @@ function HistoryItem({ a, open, onToggle, fp, typeFilter }: any) {
           <div className="font-semibold">{formatScanLabel(a.created_at)}</div>
           <div className="text-xs text-muted-foreground">{a.predictions_generated} pick{a.predictions_generated === 1 ? "" : "s"} · {a.matches_analyzed} match{a.matches_analyzed === 1 ? "" : "es"} analysed</div>
         </div>
-        <div className="text-right">
-          {a.avg_confidence != null && <div className="font-mono text-neon font-bold">{a.avg_confidence}%</div>}
+        <div className="flex items-center gap-3">
+          <ScanScorecard total={a.score_total ?? a.predictions_generated ?? 0} won={a.score_won ?? 0} pending={a.score_pending ?? 0} />
+          <div className="text-right">
+            {a.avg_confidence != null && <div className="font-mono text-neon font-bold">{a.avg_confidence}%</div>}
+          </div>
         </div>
       </button>
       {open && (
