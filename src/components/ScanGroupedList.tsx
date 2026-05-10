@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { getAnalyses, getPredictions } from "@/lib/predictions.functions";
 import { PredictionCard, type Prediction } from "./PredictionCard";
+import { ScanScorecard } from "./ScanScorecard";
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function formatScanLabel(iso: string): string {
@@ -75,6 +76,7 @@ function ScanItem({ a, open, onToggle, fp, engine, typeFilter, accent }: any) {
             {a.predictions_generated} pick{a.predictions_generated === 1 ? "" : "s"} · {a.matches_analyzed} match{a.matches_analyzed === 1 ? "" : "es"} analysed
           </div>
         </div>
+        <ScanScorecard total={a.score_total ?? a.predictions_generated ?? 0} won={a.score_won ?? 0} pending={a.score_pending ?? 0} />
         {a.avg_confidence != null && (
           <div className={`font-mono font-bold ${accentClass}`}>{a.avg_confidence}%</div>
         )}
