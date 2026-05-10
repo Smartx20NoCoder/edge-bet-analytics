@@ -1,10 +1,12 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, RefreshCw, Calendar, Clock, Hash, TrendingUp, CheckCircle2, AlertCircle, Activity, Target } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import { Loader2, RefreshCw, Calendar, Clock, Hash, TrendingUp, CheckCircle2, AlertCircle, Activity, Target, Radio } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { getApiUsageToday } from "@/lib/predictions.functions";
 
 const TIMEFRAMES = [
   { hours: 4, label: "Next 4h" },
@@ -36,6 +38,13 @@ export function RunAnalysisBar() {
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const qc = useQueryClient();
+
+  const fetchUsage = useServerFn(getApiUsageToday);
+  const usage = useQuery({
+    queryKey: ["api-usage-today"],
+    queryFn: () => fetchUsage(),
+    refetchInterval: 60_000,
+  });
 
   const append = (e: LogEntry) => {
     setLog((prev) => [...prev, e]);
@@ -203,7 +212,14 @@ export function RunAnalysisBar() {
           Force re-fetch analysis (uses extra API calls)
         </label>
         <div className="ml-auto flex items-center gap-3">
-          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">200 calls/day · manual only</span>
+          <span className={`inline-flex items-center gap-1.5 px-2 h-7 rounded-md border text-[11px] font-mono ${
+            (usage.data?.count ?? 0) >= (usage.data?.limit ?? 200) * 0.9
+              ? "border-destructive/40 text-destructive bg-destructive/10"
+              : "border-neon/30 text-neon bg-neon/5"
+          }`} title="iSports API calls today">
+            <Radio className="h-3 w-3" />
+            {usage.data?.count ?? "—"}/{usage.data?.limit ?? 200}
+          </span>
           <Button onClick={start} disabled={running} className="bg-neon text-neon-foreground hover:bg-neon/90">
             {running ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             {running ? "Scanning…" : "Run Analysis"}

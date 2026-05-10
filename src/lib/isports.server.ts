@@ -27,6 +27,10 @@ async function get<T = any>(path: string, params: Record<string, string>): Promi
     console.error(`[iSportsAPI] ${path} code=${json.code} msg=${json.message ?? ""}`);
     throw new Error(`iSportsAPI ${path} code=${json.code}: ${json.message ?? "unknown error"}`);
   }
+  // Fire-and-forget API usage tracking.
+  void supabaseAdmin.from("api_usage").insert({ endpoint: path }).then(({ error }) => {
+    if (error) console.warn(`[api_usage] insert failed: ${error.message}`);
+  });
   return json as T;
 }
 

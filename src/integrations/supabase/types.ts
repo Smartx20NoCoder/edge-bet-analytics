@@ -71,6 +71,27 @@ export type Database = {
         }
         Relationships: []
       }
+      api_usage: {
+        Row: {
+          called_at: string
+          date: string | null
+          endpoint: string
+          id: string
+        }
+        Insert: {
+          called_at?: string
+          date?: string | null
+          endpoint: string
+          id?: string
+        }
+        Update: {
+          called_at?: string
+          date?: string | null
+          endpoint?: string
+          id?: string
+        }
+        Relationships: []
+      }
       fixtures_cache: {
         Row: {
           away_team: string | null

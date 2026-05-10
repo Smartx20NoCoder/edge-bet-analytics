@@ -178,6 +178,43 @@ function poissonP(k: number, lambda: number) {
   return Math.exp(-lambda) * Math.pow(lambda, k) / f;
 }
 
+// Extract fair (overround-removed) market probabilities for H/D/A from the analysis payload.
+function extractMarketProbs(analysis: AnyObj): { pH: number; pD: number; pA: number; oH: number; oD: number; oA: number } | undefined {
+  const d = root(analysis);
+
+  // Try CSV homeOdds / awayOdds rows first (each row is a CSV with columns matching home/away last matches).
+  // Top-level fields can also be a row of [home, draw, away] for the upcoming match.
+  const tryTriple = (h: any, dr: any, a: any) => {
+    const oH = n(h), oD = n(dr), oA = n(a);
+    if (!oH || !oD || !oA || oH < 1.01 || oD < 1.01 || oA < 1.01) return undefined;
+    const iH = 1 / oH, iD = 1 / oD, iA = 1 / oA;
+    const s = iH + iD + iA;
+    return { pH: iH / s, pD: iD / s, pA: iA / s, oH, oD, oA };
+  };
+
+  // Direct top-level fields some payloads expose.
+  const direct = tryTriple(d.homeOdds, d.drawOdds, d.awayOdds)
+    ?? tryTriple(d.oddsHome, d.oddsDraw, d.oddsAway);
+  if (direct) return direct;
+
+  // Pull pre-match odds from any *LastMatches CSV row whose matchId matches d.matchId, else fall back
+  // to averaging the most recent row instant odds. Most reliable: the analysis CSV column layout has
+  // initialHome/Draw/Away at COL.initialHome..initialAway.
+  const allRows: Row[] = [
+    ...parseRows(d.homeLastMatches),
+    ...parseRows(d.awayLastMatches),
+    ...parseRows(d.headToHead),
+  ];
+  const targetId = d.matchId ? String(d.matchId) : undefined;
+  for (const r of allRows) {
+    if (targetId && r[COL.matchId] !== targetId) continue;
+    const t = tryTriple(r[COL.initialHome], r[COL.initialDraw], r[COL.initialAway])
+      ?? tryTriple(r[COL.instantHome], r[COL.instantDraw], r[COL.instantAway]);
+    if (t) return t;
+  }
+  return undefined;
+}
+
 export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?: string): MatchPrediction[] {
   const d = root(analysis);
   const homeRows = parseRows(d.homeLastMatches);
@@ -187,19 +224,33 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
   const awayAtAway = dataVsRates(d.awayDataVs, "away") ?? fallbackFromRows(awayRows, awayId);
   if (!homeAtHome || !awayAtAway) return [];
 
-  // Blended outcome probabilities.
-  let pH = 0.6 * homeAtHome.winRate + 0.4 * (1 - awayAtAway.winRate - awayAtAway.drawRate);
-  let pA = 0.6 * awayAtAway.winRate + 0.4 * (1 - homeAtHome.winRate - homeAtHome.drawRate);
-  let pD = 0.5 * (homeAtHome.drawRate + awayAtAway.drawRate);
-  pH = Math.max(0.01, pH); pA = Math.max(0.01, pA); pD = Math.max(0.01, pD);
-  const total = pH + pA + pD;
-  pH /= total; pA /= total; pD /= total;
+  // Model probabilities.
+  let mH = 0.6 * homeAtHome.winRate + 0.4 * (1 - awayAtAway.winRate - awayAtAway.drawRate);
+  let mA = 0.6 * awayAtAway.winRate + 0.4 * (1 - homeAtHome.winRate - homeAtHome.drawRate);
+  let mD = 0.5 * (homeAtHome.drawRate + awayAtAway.drawRate);
+  mH = Math.max(0.01, mH); mA = Math.max(0.01, mA); mD = Math.max(0.01, mD);
+  const mTot = mH + mA + mD;
+  mH /= mTot; mA /= mTot; mD /= mTot;
+
+  // Market probabilities (overround-removed).
+  const market = extractMarketProbs(analysis);
+  const blendW = market ? 0.45 : 0;
+  const pH = (1 - blendW) * mH + blendW * (market?.pH ?? 0);
+  const pA = (1 - blendW) * mA + blendW * (market?.pA ?? 0);
+  const pD = (1 - blendW) * mD + blendW * (market?.pD ?? 0);
 
   const out: MatchPrediction[] = [];
   const homeFav = pH >= pA;
+  const modelHomeFav = mH >= mA;
+  const marketHomeFav = market ? market.pH >= market.pA : homeFav;
+  const agree = !market || modelHomeFav === marketHomeFav;
+
+  const marketReason = market
+    ? `Market odds H ${market.oH.toFixed(2)} / D ${market.oD.toFixed(2)} / A ${market.oA.toFixed(2)} → fair P ${(market.pH*100).toFixed(0)}/${(market.pD*100).toFixed(0)}/${(market.pA*100).toFixed(0)}%.`
+    : "No bookie odds available — model-only.";
 
   const winnerConf = Math.round(Math.max(pH, pA) * 1000) / 10;
-  if (winnerConf >= 65) {
+  if (winnerConf >= 65 && agree) {
     out.push({
       type: "match_winner",
       selection: homeFav ? "Home Win" : "Away Win",
@@ -208,26 +259,27 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
       reasons: [
         `Home @ home: ${(homeAtHome.winRate * 100).toFixed(0)}% W / ${(homeAtHome.drawRate * 100).toFixed(0)}% D (${homeAtHome.count} g).`,
         `Away @ away: ${(awayAtAway.winRate * 100).toFixed(0)}% W / ${(awayAtAway.drawRate * 100).toFixed(0)}% D (${awayAtAway.count} g).`,
+        marketReason,
       ],
-      stats: { pH, pA, pD },
+      stats: { pH, pA, pD, model: { mH, mD, mA }, market },
     });
   }
 
   const dcConf = Math.round((homeFav ? pH + pD : pA + pD) * 1000) / 10;
-  if (dcConf >= 75) {
+  if (dcConf >= 75 && agree) {
     out.push({
       type: "double_chance",
       selection: homeFav ? "Home or Draw (1X)" : "Draw or Away (X2)",
       confidence: Math.min(95, dcConf),
       riskLevel: dcConf >= 80 ? "low" : "medium",
-      reasons: [`Combined probability ${dcConf.toFixed(1)}% from blended rates.`],
-      stats: { pH, pA, pD },
+      reasons: [`Combined blended probability ${dcConf.toFixed(1)}%.`, marketReason],
+      stats: { pH, pA, pD, market },
     });
   }
 
-  // Asian handicap based on edge.
+  // Asian handicap based on blended edge.
   const edge = Math.abs(pH - pA);
-  if (edge >= 0.18) {
+  if (edge >= 0.18 && agree) {
     const ahConf = Math.round(Math.min(90, 65 + edge * 100) * 10) / 10;
     if (ahConf >= 75) {
       out.push({
@@ -235,8 +287,8 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
         selection: homeFav ? "Home -0.25 AH" : "Away -0.25 AH",
         confidence: ahConf,
         riskLevel: ahConf >= 82 ? "low" : "medium",
-        reasons: [`Probability gap ${(edge * 100).toFixed(0)} pts justifies a quarter-line.`],
-        stats: { edge, pH, pA },
+        reasons: [`Blended probability gap ${(edge * 100).toFixed(0)} pts justifies a quarter-line.`, marketReason],
+        stats: { edge, pH, pA, market },
       });
     }
   }
