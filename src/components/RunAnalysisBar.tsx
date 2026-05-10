@@ -169,6 +169,22 @@ export function RunAnalysisBar() {
 
   return (
     <div className="glass rounded-xl p-4 space-y-4">
+      <div>
+        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground mb-2">
+          <Target className="h-3 w-3" /> Bet Type
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {BET_TYPES.map((b) => (
+            <button
+              key={b.id}
+              onClick={() => setBetType(b.id)}
+              className={`px-3 h-8 rounded-md text-xs border transition-colors ${betType === b.id ? "bg-neon/15 border-neon/50 text-neon" : "border-border text-muted-foreground hover:text-foreground"}`}
+            >
+              {b.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <Field label="Date" Icon={Calendar}>
           <input
