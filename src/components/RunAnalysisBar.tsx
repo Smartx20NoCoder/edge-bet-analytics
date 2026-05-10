@@ -46,6 +46,18 @@ export function RunAnalysisBar() {
     refetchInterval: 60_000,
   });
 
+  const failoverNotifiedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const f = usage.data?.failoverAt;
+    if (f && failoverNotifiedRef.current !== f) {
+      failoverNotifiedRef.current = f;
+      toast.warning("API Key 1 exhausted — switched to Key 2", {
+        description: "Counter has been reset to track usage on the new key.",
+        duration: 8000,
+      });
+    }
+  }, [usage.data?.failoverAt]);
+
   const append = (e: LogEntry) => {
     setLog((prev) => [...prev, e]);
     queueMicrotask(() => logEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }));
