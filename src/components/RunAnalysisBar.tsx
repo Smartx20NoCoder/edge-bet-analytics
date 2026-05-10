@@ -230,7 +230,7 @@ export function RunAnalysisBar() {
               : "border-neon/30 text-neon bg-neon/5"
           }`} title="iSports API calls today">
             <Radio className="h-3 w-3" />
-            {usage.data?.count ?? "—"}/{usage.data?.limit ?? 200}
+            {usage.data?.count ?? "—"}/{usage.data?.limit ?? 200} (Key {usage.data?.activeKey ?? 1})
           </span>
           <Button onClick={start} disabled={running} className="bg-neon text-neon-foreground hover:bg-neon/90">
             {running ? <Loader2 className="animate-spin" /> : <RefreshCw />}
