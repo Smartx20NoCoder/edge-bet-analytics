@@ -3,35 +3,115 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 const BASE = "http://api.isportsapi.com/sport/football";
 
-function key() {
-  const k = process.env.ISPORTS_API_KEY;
-  if (!k) throw new Error("ISPORTS_API_KEY not configured");
-  return k;
+function keyForIndex(idx: 1 | 2): string | undefined {
+  if (idx === 1) return process.env.ISPORTS_API_KEY || undefined;
+  return process.env.ISPORTS_API_KEY_2 || undefined;
 }
 
-async function get<T = any>(path: string, params: Record<string, string>): Promise<T> {
-  const qs = new URLSearchParams({ api_key: key(), ...params }).toString();
+// In-memory cache of key statuses to avoid a DB roundtrip on every call.
+let statusCache: { fetchedAt: number; rows: { key_index: number; exhausted_at: string | null; active: boolean }[] } | null = null;
+const STATUS_TTL_MS = 30_000;
+
+async function getKeyStatuses() {
+  if (statusCache && Date.now() - statusCache.fetchedAt < STATUS_TTL_MS) return statusCache.rows;
+  const { data } = await supabaseAdmin.from("api_key_status").select("key_index, exhausted_at, active");
+  statusCache = { fetchedAt: Date.now(), rows: (data ?? []) as any };
+  return statusCache.rows;
+}
+
+function invalidateStatusCache() { statusCache = null; }
+
+async function isExhausted(idx: 1 | 2): Promise<boolean> {
+  const rows = await getKeyStatuses();
+  const r = rows.find((x) => x.key_index === idx);
+  if (!r) return false;
+  return !r.active || !!r.exhausted_at;
+}
+
+async function markExhausted(idx: 1 | 2) {
+  await supabaseAdmin.from("api_key_status").upsert({
+    key_index: idx,
+    exhausted_at: new Date().toISOString(),
+    active: false,
+    updated_at: new Date().toISOString(),
+  });
+  invalidateStatusCache();
+}
+
+async function recordFailover() {
+  await supabaseAdmin.from("api_usage").insert({ endpoint: "__failover" });
+}
+
+function isQuotaResponse(json: any, httpStatus: number): boolean {
+  if (httpStatus === 429) return true;
+  if (json && typeof json === "object" && (json.code === 10 || json.code === "10")) return true;
+  return false;
+}
+
+async function tryWithKey<T = any>(idx: 1 | 2, path: string, params: Record<string, string>): Promise<{ ok: true; json: T } | { ok: false; quota: boolean; reason: string }> {
+  const k = keyForIndex(idx);
+  if (!k) return { ok: false, quota: false, reason: `ISPORTS_API_KEY${idx === 2 ? "_2" : ""} not configured` };
+  const qs = new URLSearchParams({ api_key: k, ...params }).toString();
   const url = `${BASE}${path}?${qs}`;
   const res = await fetch(url, { method: "GET" });
   const text = await res.text();
-  if (!res.ok) {
-    console.error(`[iSportsAPI] ${path} HTTP ${res.status}: ${text.slice(0, 300)}`);
-    throw new Error(`iSportsAPI ${path} HTTP ${res.status}: ${text.slice(0, 200)}`);
-  }
   let json: any;
   try { json = JSON.parse(text); } catch {
-    console.error(`[iSportsAPI] ${path} non-JSON response: ${text.slice(0, 300)}`);
-    throw new Error(`iSportsAPI ${path} returned non-JSON response`);
+    if (!res.ok) return { ok: false, quota: false, reason: `HTTP ${res.status}: ${text.slice(0, 200)}` };
+    return { ok: false, quota: false, reason: `non-JSON response` };
   }
+  if (isQuotaResponse(json, res.status)) {
+    return { ok: false, quota: true, reason: `quota exceeded (key ${idx})` };
+  }
+  if (!res.ok) return { ok: false, quota: false, reason: `HTTP ${res.status}: ${text.slice(0, 200)}` };
   if (json.code !== 0 && json.code !== undefined) {
-    console.error(`[iSportsAPI] ${path} code=${json.code} msg=${json.message ?? ""}`);
-    throw new Error(`iSportsAPI ${path} code=${json.code}: ${json.message ?? "unknown error"}`);
+    return { ok: false, quota: false, reason: `code=${json.code}: ${json.message ?? "unknown"}` };
   }
   // Fire-and-forget API usage tracking.
   void supabaseAdmin.from("api_usage").insert({ endpoint: path }).then(({ error }) => {
     if (error) console.warn(`[api_usage] insert failed: ${error.message}`);
   });
-  return json as T;
+  return { ok: true, json };
+}
+
+async function get<T = any>(path: string, params: Record<string, string>): Promise<T> {
+  // Determine starting key: prefer 1, but skip if marked exhausted.
+  const primaryExhausted = await isExhausted(1);
+  const secondaryExhausted = await isExhausted(2);
+
+  const order: (1 | 2)[] = primaryExhausted ? [2, 1] : [1, 2];
+  let lastReason = "no key available";
+  let attemptedFailover = false;
+
+  for (let i = 0; i < order.length; i++) {
+    const idx = order[i];
+    if (idx === 1 && primaryExhausted) continue;
+    if (idx === 2 && secondaryExhausted && !primaryExhausted) {
+      // both exhausted
+      lastReason = "both keys exhausted";
+      continue;
+    }
+    const result = await tryWithKey<T>(idx, path, params);
+    if (result.ok) return result.json;
+    lastReason = result.reason;
+    if (result.quota) {
+      await markExhausted(idx);
+      // If we just exhausted key 1 and key 2 is available, log a failover.
+      if (idx === 1 && i + 1 < order.length && !attemptedFailover) {
+        const otherK = keyForIndex(order[i + 1]);
+        if (otherK) {
+          attemptedFailover = true;
+          await recordFailover();
+        }
+      }
+      continue; // try next key
+    }
+    // non-quota error: don't try the second key, fail fast.
+    console.error(`[iSportsAPI] ${path} key ${idx} failed: ${result.reason}`);
+    throw new Error(`iSportsAPI ${path}: ${result.reason}`);
+  }
+  console.error(`[iSportsAPI] ${path} all keys exhausted: ${lastReason}`);
+  throw new Error(`iSportsAPI ${path} failed: ${lastReason}`);
 }
 
 export type ScheduleMatch = {
@@ -48,7 +128,6 @@ export type ScheduleMatch = {
 
 /** Schedule by date (YYYY-MM-DD). Returns ALL leagues for that date. */
 export async function fetchScheduleByDate(date: string): Promise<ScheduleMatch[]> {
-  // Cache schedules by date — they don't change much intra-day
   const { data: cached } = await supabaseAdmin
     .from("analysis_cache")
     .select("raw, fetched_at")
@@ -65,18 +144,13 @@ export async function fetchScheduleByDate(date: string): Promise<ScheduleMatch[]
       fetched_at: new Date().toISOString(),
     });
   }
-  // Schedule payload shapes seen in the wild:
-  //   { code:0, data:[ ... ] }
-  //   { code:0, data:{ schedule:[ ... ] } }
-  //   { code:0, data:{ matches:[ ... ] } }
   let list: any[] = [];
   if (Array.isArray(payload?.data)) list = payload.data;
   else if (Array.isArray(payload?.data?.schedule)) list = payload.data.schedule;
   else if (Array.isArray(payload?.data?.matches)) list = payload.data.matches;
   else if (Array.isArray(payload?.results)) list = payload.results;
   if (!list.length) {
-    console.warn(`[iSportsAPI] schedule for ${date} returned 0 matches. Top-level keys:`,
-      Object.keys(payload ?? {}), "data keys:", payload?.data && typeof payload.data === "object" ? Object.keys(payload.data) : typeof payload?.data);
+    console.warn(`[iSportsAPI] schedule for ${date} returned 0 matches.`);
   }
   return list
     .map((m: any) => ({
@@ -123,9 +197,7 @@ export type ResultRow = {
   status: string | null;
 };
 
-/** FT results by date. The user's plan doesn't include /results, so we read
- *  finished matches out of the /schedule payload (which includes scores and
- *  status for completed games). Reuses the __schedule_${date} cache entry. */
+/** FT results sourced from /schedule (which includes scores for finished games). */
 export async function fetchResultsByDate(date: string): Promise<ResultRow[]> {
   const cacheKey = `__schedule_${date}`;
   let payload: any;
@@ -153,12 +225,6 @@ export async function fetchResultsByDate(date: string): Promise<ResultRow[]> {
   else if (Array.isArray(payload?.results)) list = payload.results;
   else if (Array.isArray(payload?.list)) list = payload.list;
 
-  console.log(`[iSportsAPI] results-from-schedule ${date}: count=${list.length}`);
-  if (list.length && list[0]) {
-    console.log(`[iSportsAPI] schedule sample row keys=${JSON.stringify(Object.keys(list[0]))}`);
-  }
-
-  // Status detection: iSports uses numeric status codes; 3 = finished. Also accept string variants.
   const isFinished = (s: any): boolean => {
     if (s == null) return false;
     if (typeof s === "number") return s === 3 || s === -1;
