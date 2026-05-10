@@ -1,0 +1,1 @@
+DROP POLICY IF EXISTS "public insert api_usage" ON public.api_usage;
