@@ -84,7 +84,7 @@ export function RunAnalysisBar() {
     const params = new URLSearchParams({
       date, timeframeHours: String(timeframeHours), maxMatches: String(maxMatches),
       minOdds: String(minOdds), trustedOnly: String(trustedOnly), refresh: String(refresh),
-      maxPicks: String(maxPicks),
+      maxPicks: String(maxPicks), betType,
     });
     const ctrl = new AbortController();
     abortRef.current = ctrl;
