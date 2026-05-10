@@ -212,7 +212,14 @@ export function RunAnalysisBar() {
           Force re-fetch analysis (uses extra API calls)
         </label>
         <div className="ml-auto flex items-center gap-3">
-          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">200 calls/day · manual only</span>
+          <span className={`inline-flex items-center gap-1.5 px-2 h-7 rounded-md border text-[11px] font-mono ${
+            (usage.data?.count ?? 0) >= (usage.data?.limit ?? 200) * 0.9
+              ? "border-destructive/40 text-destructive bg-destructive/10"
+              : "border-neon/30 text-neon bg-neon/5"
+          }`} title="iSports API calls today">
+            <Radio className="h-3 w-3" />
+            {usage.data?.count ?? "—"}/{usage.data?.limit ?? 200}
+          </span>
           <Button onClick={start} disabled={running} className="bg-neon text-neon-foreground hover:bg-neon/90">
             {running ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             {running ? "Scanning…" : "Run Analysis"}
