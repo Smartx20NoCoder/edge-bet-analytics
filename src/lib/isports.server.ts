@@ -44,7 +44,12 @@ async function recordFailover() {
 
 function isQuotaResponse(json: any, httpStatus: number): boolean {
   if (httpStatus === 429) return true;
-  if (json && typeof json === "object" && (json.code === 10 || json.code === "10")) return true;
+  if (json && typeof json === "object") {
+    const code = json.code;
+    if (code === 10 || code === "10") return true;
+    const msg = String(json.message ?? "").toLowerCase();
+    if ((code === 2 || code === "2") && (msg.includes("trial") || msg.includes("200") || msg.includes("quota") || msg.includes("limit"))) return true;
+  }
   return false;
 }
 
