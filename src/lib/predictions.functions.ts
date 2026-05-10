@@ -281,15 +281,38 @@ export const checkApiStatus = createServerFn({ method: "GET" }).handler(async ()
 
 export const getApiUsageToday = createServerFn({ method: "GET" }).handler(async () => {
   const today = new Date().toISOString().slice(0, 10);
-  const { count, error } = await supabaseAdmin
+  const startOfDay = new Date(today + "T00:00:00.000Z").toISOString();
+
+  // Look for a failover marker today.
+  const { data: failoverRows } = await supabaseAdmin
+    .from("api_usage")
+    .select("called_at")
+    .eq("endpoint", "__failover")
+    .gte("called_at", startOfDay)
+    .order("called_at", { ascending: false })
+    .limit(1);
+  const failoverAt = failoverRows && failoverRows.length ? failoverRows[0].called_at : null;
+
+  // Active key: read api_key_status; if key 1 inactive/exhausted -> key 2.
+  const { data: statusRows } = await supabaseAdmin
+    .from("api_key_status")
+    .select("key_index, exhausted_at, active");
+  const k1 = statusRows?.find((r: any) => r.key_index === 1);
+  const activeKey: 1 | 2 = k1 && (k1.active === false || k1.exhausted_at) ? 2 : 1;
+
+  // Count calls today, filtered to after the failover timestamp if present.
+  let q = supabaseAdmin
     .from("api_usage")
     .select("*", { count: "exact", head: true })
-    .eq("date", today);
+    .eq("date", today)
+    .neq("endpoint", "__failover");
+  if (failoverAt) q = q.gte("called_at", failoverAt);
+  const { count, error } = await q;
   if (error) {
     console.warn(`[getApiUsageToday] ${error.message}`);
-    return { count: 0, limit: 200 };
+    return { count: 0, limit: 200, activeKey, failoverAt };
   }
-  return { count: count ?? 0, limit: 200 };
+  return { count: count ?? 0, limit: 200, activeKey, failoverAt };
 });
 
 export const updateResults = createServerFn({ method: "POST" })
