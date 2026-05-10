@@ -71,6 +71,27 @@ export type Database = {
         }
         Relationships: []
       }
+      api_key_status: {
+        Row: {
+          active: boolean
+          exhausted_at: string | null
+          key_index: number
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          exhausted_at?: string | null
+          key_index: number
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          exhausted_at?: string | null
+          key_index?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       api_usage: {
         Row: {
           called_at: string
