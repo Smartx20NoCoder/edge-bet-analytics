@@ -329,3 +329,47 @@ export const updateResults = createServerFn({ method: "POST" })
     console.log(`[updateResults] analysisId=${data.analysisId} totalPreds=${preds.length} totalFinishedResults=${totalResults} updated=${updated} skipped=${skipped} noResultFound=${noResultFound}`);
     return { updated, skipped, noResultFound };
   });
+
+export const updateAllPendingResults = createServerFn({ method: "POST" }).handler(async () => {
+  const { data: preds, error } = await supabaseAdmin
+    .from("predictions")
+    .select("*")
+    .is("is_correct", null);
+  if (error) throw new Error(error.message);
+  if (!preds || !preds.length) return { updated: 0, stillPending: 0, dates: 0, totalScanned: 0 };
+
+  const byDate: Record<string, any[]> = {};
+  for (const p of preds) {
+    if (!p.kickoff) continue;
+    const d = new Date(p.kickoff).toISOString().slice(0, 10);
+    (byDate[d] ??= []).push(p);
+  }
+
+  let updated = 0;
+  let stillPending = 0;
+  const dates = Object.keys(byDate);
+  for (const [date, group] of Object.entries(byDate)) {
+    const results = await fetchResultsByDate(date);
+    const map = new Map(results.map((r) => [r.matchId, r]));
+    for (const p of group) {
+      const r = map.get(String(p.match_id));
+      if (!r || (r.homeScore == null && r.awayScore == null)) { stillPending++; continue; }
+      const correct = gradePrediction(p.prediction_type, p.selection, r);
+      const totalC = (r.homeCorners ?? 0) + (r.awayCorners ?? 0);
+      await supabaseAdmin
+        .from("predictions")
+        .update({
+          home_score: r.homeScore,
+          away_score: r.awayScore,
+          total_corners: r.homeCorners != null && r.awayCorners != null ? totalC : null,
+          ft_status: r.status,
+          is_correct: correct,
+          results_updated_at: new Date().toISOString(),
+        })
+        .eq("id", p.id);
+      updated++;
+    }
+  }
+  console.log(`[updateAllPendingResults] scanned=${preds.length} updated=${updated} stillPending=${stillPending} dates=${dates.length}`);
+  return { updated, stillPending, dates: dates.length, totalScanned: preds.length };
+});
