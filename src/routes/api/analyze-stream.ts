@@ -133,8 +133,8 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     raw: m.raw,
                     fetched_at: new Date().toISOString(),
                   });
-                  const corners = predictCorners(analysis, m.homeId, m.awayId);
-                  const matchPreds = predictMatchOutcomes(analysis, m.homeId, m.awayId);
+                  const corners = runCorners ? predictCorners(analysis, m.homeId, m.awayId) : [];
+                  const matchPreds = runMatch ? predictMatchOutcomes(analysis, m.homeId, m.awayId) : [];
                   const collected: any[] = [];
                   for (const c of corners) collected.push({
                     engine: "corners", prediction_type: c.type, selection: c.selection,
@@ -147,9 +147,10 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     confidence: p.confidence, risk_level: p.riskLevel, reasons: p.reasons,
                     stats: p.stats, recommendation: `Lean ${p.selection} (${p.confidence}% model confidence).`,
                   });
-                  // One best pick per match: pick highest confidence only.
-                  collected.sort((a, b) => Number(b.confidence) - Number(a.confidence));
-                  const best = collected[0];
+                  // Restrict to selected bet type if a specific one was chosen.
+                  const filtered = betType === "all" ? collected : collected.filter((x) => x.prediction_type === betType);
+                  filtered.sort((a, b) => Number(b.confidence) - Number(a.confidence));
+                  const best = filtered[0];
                   if (best) {
                     predictions.push({
                       ...best, analysis_id: analysisRow.id, match_id: m.matchId,
