@@ -214,7 +214,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   predictions_generated: finalPreds.length,
                   avg_confidence: avg ? Math.round(avg * 100) / 100 : null,
                   status: "completed",
-                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues }),
+                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting }),
                 })
                 .eq("id", analysisRow.id);
 
