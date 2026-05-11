@@ -104,7 +104,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
     const predictions: any[] = [];
     const seen = new Set<string>();
 
-    for (const m of candidates) {
+    for (const m of finalCandidates) {
       if (seen.has(String(m.matchId))) continue;
       seen.add(String(m.matchId));
       try {
