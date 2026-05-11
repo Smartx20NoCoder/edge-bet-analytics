@@ -258,6 +258,6 @@ export async function fetchResultsByDate(date: string): Promise<ResultRow[]> {
         _rawStatus: rawStatus,
       };
     })
-    .filter((r: any) => r.matchId && isFinished(r._rawStatus))
+    .filter((r: any) => r.matchId && isFinished(r._rawStatus, r.homeScore, r.awayScore))
     .map(({ _rawStatus, ...r }: any) => r);
 }
