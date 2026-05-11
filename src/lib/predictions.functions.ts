@@ -216,7 +216,16 @@ export const getAnalyses = createServerFn({ method: "POST" })
       .order("created_at", { ascending: false })
       .limit(100);
     if (error) throw new Error(error.message);
-    let analyses: any[] = rows ?? [];
+    let analyses: any[] = (rows ?? []).map((a: any) => {
+      let leagueScope: "major" | "all" | null = null;
+      try {
+        const parsed = a.notes ? JSON.parse(a.notes) : null;
+        if (parsed && typeof parsed.trustedOnly === "boolean") {
+          leagueScope = parsed.trustedOnly ? "major" : "all";
+        }
+      } catch {}
+      return { ...a, league_scope: leagueScope };
+    });
     const ids = analyses.map((a) => a.id);
     if (ids.length) {
       let pq = supabaseAdmin
