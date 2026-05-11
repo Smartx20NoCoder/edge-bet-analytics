@@ -92,10 +92,10 @@ export const runAnalysis = createServerFn({ method: "POST" })
       .insert({
         league_id: null,
         league_name: null,
-        matches_analyzed: candidates.length,
+        matches_analyzed: finalCandidates.length,
         predictions_generated: 0,
         status: "running",
-        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt }),
+        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt, skippedExisting }),
       })
       .select()
       .single();
