@@ -186,7 +186,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
       ? finalPreds.reduce((s, p) => s + Number(p.confidence), 0) / finalPreds.length
       : null;
     const distinctLeagues = new Set(
-      candidates.map((c) => c.leagueName).filter(Boolean) as string[],
+      finalCandidates.map((c) => c.leagueName).filter(Boolean) as string[],
     ).size;
     await supabaseAdmin
       .from("analyses")
@@ -194,13 +194,14 @@ export const runAnalysis = createServerFn({ method: "POST" })
         predictions_generated: finalPreds.length,
         avg_confidence: avg ? Math.round(avg * 100) / 100 : null,
         status: "completed",
-        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt, distinctLeagues }),
+        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt, distinctLeagues, skippedExisting }),
       })
       .eq("id", analysisRow.id);
 
     return {
       analysisId: analysisRow.id,
-      matchesAnalyzed: candidates.length,
+      matchesAnalyzed: finalCandidates.length,
+      skippedExisting,
       predictionsGenerated: finalPreds.length,
       date,
     };
