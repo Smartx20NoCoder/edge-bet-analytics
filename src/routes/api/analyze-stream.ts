@@ -83,9 +83,31 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 return;
               }
 
-              const candidates = afterTrusted.sort((a, b) => a.matchTime - b.matchTime).slice(0, maxMatches);
+              const initialCandidates = afterTrusted.sort((a, b) => a.matchTime - b.matchTime).slice(0, maxMatches);
+
+              // Dedup: skip matches already predicted (any market).
+              let skippedExisting = 0;
+              let candidates = initialCandidates;
+              if (initialCandidates.length) {
+                const ids = initialCandidates.map((c) => String(c.matchId));
+                const { data: existing } = await supabaseAdmin
+                  .from("predictions")
+                  .select("match_id")
+                  .in("match_id", ids);
+                const existingSet = new Set((existing ?? []).map((r: any) => String(r.match_id)));
+                candidates = initialCandidates.filter((c) => !existingSet.has(String(c.matchId)));
+                skippedExisting = initialCandidates.length - candidates.length;
+                if (skippedExisting) {
+                  send("status", { message: `Skipping ${skippedExisting} matches already predicted in a previous scan.` });
+                }
+              }
+              if (!candidates.length) {
+                send("error", { message: `All ${initialCandidates.length} qualifying matches were already predicted in earlier scans. Try a different date or timeframe.` });
+                controller.close();
+                return;
+              }
               send("status", {
-                message: `Analyzing top ${candidates.length} of ${afterTrusted.length} qualifying matches.`,
+                message: `Analyzing top ${candidates.length} of ${afterTrusted.length} qualifying matches${skippedExisting ? ` (${skippedExisting} skipped as duplicates)` : ""}.`,
                 total: candidates.length,
               });
 
