@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { getAnalyses, getPredictions } from "@/lib/predictions.functions";
 import { PredictionCard, type Prediction } from "./PredictionCard";
 import { ScanScorecard } from "./ScanScorecard";
+import { LeagueScopeBadge } from "./LeagueScopeBadge";
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function formatScanLabel(iso: string): string {
