@@ -69,6 +69,22 @@ export const runAnalysis = createServerFn({ method: "POST" })
       .sort((a, b) => a.matchTime - b.matchTime)
       .slice(0, maxMatches);
 
+    // Dedup: skip matches that already have any prediction recorded.
+    let skippedExisting = 0;
+    let candidatesAfterDedup = candidates;
+    if (candidates.length) {
+      const ids = candidates.map((c) => String(c.matchId));
+      const { data: existing } = await supabaseAdmin
+        .from("predictions")
+        .select("match_id")
+        .in("match_id", ids);
+      const existingSet = new Set((existing ?? []).map((r: any) => String(r.match_id)));
+      candidatesAfterDedup = candidates.filter((c) => !existingSet.has(String(c.matchId)));
+      skippedExisting = candidates.length - candidatesAfterDedup.length;
+      if (skippedExisting) console.log(`[runAnalysis] skipped ${skippedExisting} already-predicted matches`);
+    }
+    const finalCandidates = candidatesAfterDedup;
+
     const scanStartedAt = new Date().toISOString();
 
     const { data: analysisRow, error: aErr } = await supabaseAdmin
@@ -76,10 +92,10 @@ export const runAnalysis = createServerFn({ method: "POST" })
       .insert({
         league_id: null,
         league_name: null,
-        matches_analyzed: candidates.length,
+        matches_analyzed: finalCandidates.length,
         predictions_generated: 0,
         status: "running",
-        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt }),
+        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt, skippedExisting }),
       })
       .select()
       .single();
@@ -88,7 +104,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
     const predictions: any[] = [];
     const seen = new Set<string>();
 
-    for (const m of candidates) {
+    for (const m of finalCandidates) {
       if (seen.has(String(m.matchId))) continue;
       seen.add(String(m.matchId));
       try {
@@ -170,7 +186,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
       ? finalPreds.reduce((s, p) => s + Number(p.confidence), 0) / finalPreds.length
       : null;
     const distinctLeagues = new Set(
-      candidates.map((c) => c.leagueName).filter(Boolean) as string[],
+      finalCandidates.map((c) => c.leagueName).filter(Boolean) as string[],
     ).size;
     await supabaseAdmin
       .from("analyses")
@@ -178,13 +194,14 @@ export const runAnalysis = createServerFn({ method: "POST" })
         predictions_generated: finalPreds.length,
         avg_confidence: avg ? Math.round(avg * 100) / 100 : null,
         status: "completed",
-        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt, distinctLeagues }),
+        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt, distinctLeagues, skippedExisting }),
       })
       .eq("id", analysisRow.id);
 
     return {
       analysisId: analysisRow.id,
-      matchesAnalyzed: candidates.length,
+      matchesAnalyzed: finalCandidates.length,
+      skippedExisting,
       predictionsGenerated: finalPreds.length,
       date,
     };
