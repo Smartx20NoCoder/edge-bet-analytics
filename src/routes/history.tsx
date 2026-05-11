@@ -6,6 +6,7 @@ import { useState, useMemo } from "react";
 import { ChevronDown, ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
 import { PredictionCard, type Prediction } from "@/components/PredictionCard";
 import { ScanScorecard } from "@/components/ScanScorecard";
+import { LeagueScopeBadge } from "@/components/LeagueScopeBadge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
