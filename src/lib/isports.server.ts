@@ -230,11 +230,17 @@ export async function fetchResultsByDate(date: string): Promise<ResultRow[]> {
   else if (Array.isArray(payload?.results)) list = payload.results;
   else if (Array.isArray(payload?.list)) list = payload.list;
 
-  const isFinished = (s: any): boolean => {
+  const isFinished = (s: any, homeScore?: number | null, awayScore?: number | null): boolean => {
     if (s == null) return false;
-    if (typeof s === "number") return s === 3 || s === -1;
+    if (typeof s === "number") {
+      if (s === -1) return true;
+      if (s === -2) return homeScore != null && awayScore != null;
+      return false;
+    }
     const str = String(s).toUpperCase();
-    return str === "3" || str === "-1" || str === "FT" || str === "FINISHED" || str === "FULL_TIME" || str === "FULL-TIME" || str === "AET" || str === "PEN";
+    if (str === "-1" || str === "FT" || str === "FINISHED" || str === "FULL_TIME" || str === "FULL-TIME" || str === "AET" || str === "PEN") return true;
+    if (str === "-2") return homeScore != null && awayScore != null;
+    return false;
   };
 
   const num = (v: any): number | null => (v == null || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null);
