@@ -69,6 +69,22 @@ export const runAnalysis = createServerFn({ method: "POST" })
       .sort((a, b) => a.matchTime - b.matchTime)
       .slice(0, maxMatches);
 
+    // Dedup: skip matches that already have any prediction recorded.
+    let skippedExisting = 0;
+    let candidatesAfterDedup = candidates;
+    if (candidates.length) {
+      const ids = candidates.map((c) => String(c.matchId));
+      const { data: existing } = await supabaseAdmin
+        .from("predictions")
+        .select("match_id")
+        .in("match_id", ids);
+      const existingSet = new Set((existing ?? []).map((r: any) => String(r.match_id)));
+      candidatesAfterDedup = candidates.filter((c) => !existingSet.has(String(c.matchId)));
+      skippedExisting = candidates.length - candidatesAfterDedup.length;
+      if (skippedExisting) console.log(`[runAnalysis] skipped ${skippedExisting} already-predicted matches`);
+    }
+    const finalCandidates = candidatesAfterDedup;
+
     const scanStartedAt = new Date().toISOString();
 
     const { data: analysisRow, error: aErr } = await supabaseAdmin
