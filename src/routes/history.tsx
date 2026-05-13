@@ -14,8 +14,12 @@ export const Route = createFileRoute("/history")({
   head: () => ({
     meta: [
       { title: "Analysis History · BetEdge AI" },
-      { name: "description", content: "Browse previous prediction scans with full reasoning and confidence trail." },
+      { name: "description", content: "Browse previous prediction scans with full reasoning, confidence trail and final-result tracking." },
+      { property: "og:title", content: "Analysis History · BetEdge AI" },
+      { property: "og:description", content: "Persistent record of every scan — update FT results without re-running predictions." },
+      { property: "og:url", content: "/history" },
     ],
+    links: [{ rel: "canonical", href: "/history" }],
   }),
   component: HistoryPage,
 });
