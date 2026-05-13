@@ -240,6 +240,7 @@ export function RunAnalysisBar() {
             step={1}
             value={[maxPicks]}
             onValueChange={(v) => setMaxPicks(v[0] ?? 3)}
+            aria-label="Max Picks"
             className="mt-2"
           />
         </Field>
