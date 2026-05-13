@@ -186,8 +186,9 @@ export function RunAnalysisBar() {
         </div>
       </div>
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <Field label="Date" Icon={Calendar}>
+        <Field label="Date" Icon={Calendar} htmlFor="scan-date">
           <input
+            id="scan-date"
             type="date"
             value={date}
             onChange={(e) => setDate(e.target.value)}
@@ -195,7 +196,7 @@ export function RunAnalysisBar() {
           />
         </Field>
         <Field label="Timeframe" Icon={Clock}>
-          <div className="flex flex-wrap gap-1">
+          <div role="group" aria-label="Timeframe" className="flex flex-wrap gap-1">
             {TIMEFRAMES.map((t) => (
               <button
                 key={t.hours}
@@ -207,8 +208,9 @@ export function RunAnalysisBar() {
             ))}
           </div>
         </Field>
-        <Field label="Max Matches" Icon={Hash}>
+        <Field label="Max Matches" Icon={Hash} htmlFor="scan-max-matches">
           <input
+            id="scan-max-matches"
             type="number"
             min={1}
             max={40}
@@ -217,8 +219,9 @@ export function RunAnalysisBar() {
             className="h-9 w-full rounded-md bg-secondary border border-border px-3 text-sm font-mono"
           />
         </Field>
-        <Field label="Min Implied Odds" Icon={TrendingUp}>
+        <Field label="Min Implied Odds" Icon={TrendingUp} htmlFor="scan-min-odds">
           <input
+            id="scan-min-odds"
             type="number"
             step="0.05"
             min={1}
@@ -237,6 +240,7 @@ export function RunAnalysisBar() {
             step={1}
             value={[maxPicks]}
             onValueChange={(v) => setMaxPicks(v[0] ?? 3)}
+            aria-label="Max Picks"
             className="mt-2"
           />
         </Field>
@@ -339,12 +343,12 @@ function entryIcon(k: LogEntry["kind"]) {
   return <Activity className="h-3.5 w-3.5 mt-0.5 shrink-0" />;
 }
 
-function Field({ label, Icon, children }: { label: string; Icon: any; children: React.ReactNode }) {
+function Field({ label, Icon, children, htmlFor }: { label: string; Icon: any; children: React.ReactNode; htmlFor?: string }) {
   return (
     <div>
-      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">
+      <label htmlFor={htmlFor} className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">
         <Icon className="h-3 w-3" /> {label}
-      </div>
+      </label>
       {children}
     </div>
   );

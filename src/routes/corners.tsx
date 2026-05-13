@@ -6,8 +6,12 @@ export const Route = createFileRoute("/corners")({
   head: () => ({
     meta: [
       { title: "Corner Predictions · BetEdge AI" },
-      { name: "description", content: "Over 6.5 corner predictions from real football data with statistical scoring." },
+      { name: "description", content: "Over 6.5 and 7.5 corner predictions from real football data with 75%+ statistical confidence scoring." },
+      { property: "og:title", content: "Corner Predictions · BetEdge AI" },
+      { property: "og:description", content: "Over 6.5 / 7.5 corner predictions grouped by scan with full reasoning." },
+      { property: "og:url", content: "/corners" },
     ],
+    links: [{ rel: "canonical", href: "/corners" }],
   }),
   component: CornersPage,
 });

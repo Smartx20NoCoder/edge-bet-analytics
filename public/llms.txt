@@ -1,0 +1,11 @@
+# BetEdge AI
+
+> Football analytics and prediction terminal powered by live iSportsAPI data. Corner and match-outcome engines with 75%+ confidence discipline.
+
+## Pages
+
+- [Dashboard](/): Configure and launch live football scans.
+- [Corner Predictions](/corners): Over 6.5 / 7.5 corner picks grouped by scan.
+- [Match Outcomes](/matches): Match winner, double chance, Asian handicap, Over 1.5 goals.
+- [History](/history): Persistent record of every scan with FT result tracking.
+- [Settings](/settings): API status and engine configuration.
