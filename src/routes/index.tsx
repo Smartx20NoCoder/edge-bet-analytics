@@ -4,9 +4,13 @@ import { RunAnalysisBar } from "@/components/RunAnalysisBar";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Dashboard · BetEdge AI" },
-      { name: "description", content: "Launch live football betting scans powered by real iSportsAPI data." },
+      { title: "BetEdge AI · Football Analytics Dashboard" },
+      { name: "description", content: "Launch live football betting scans powered by real iSportsAPI data. Corner and match-outcome engines with 75%+ confidence discipline." },
+      { property: "og:title", content: "BetEdge AI · Football Analytics Dashboard" },
+      { property: "og:description", content: "Launch live football betting scans powered by real iSportsAPI data." },
+      { property: "og:url", content: "/" },
     ],
+    links: [{ rel: "canonical", href: "/" }],
   }),
   component: Dashboard,
 });
