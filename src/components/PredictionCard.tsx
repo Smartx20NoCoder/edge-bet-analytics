@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Clock, ShieldAlert, ShieldCheck, TrendingUp, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, ShieldAlert, ShieldCheck, TrendingUp, XCircle } from "lucide-react";
 
 export type Prediction = {
   id: string;
