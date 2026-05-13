@@ -65,9 +65,17 @@ export function PredictionCard({ p }: { p: Prediction }) {
             </div>
           )}
         </div>
-        <Badge variant="outline" className="border-border bg-accent/40 text-[10px] uppercase tracking-wider">
-          {TYPE_LABEL[p.prediction_type] ?? p.prediction_type}
-        </Badge>
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+          <Badge variant="outline" className="border-border bg-accent/40 text-[10px] uppercase tracking-wider">
+            {TYPE_LABEL[p.prediction_type] ?? p.prediction_type}
+          </Badge>
+          {p.stats?.oddsAvailable === false && (
+            <Badge variant="outline" className="border-gold/50 bg-gold/10 text-gold text-[10px] uppercase tracking-wider gap-1">
+              <AlertTriangle className="h-3 w-3" />
+              No Odds
+            </Badge>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center justify-between gap-4">
