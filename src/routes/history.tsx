@@ -95,6 +95,7 @@ function HistoryPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search by date (YYYY-MM-DD or formatted)…"
+          aria-label="Search analyses"
           className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground py-2"
         />
       </div>
