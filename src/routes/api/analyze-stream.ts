@@ -3,7 +3,12 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { fetchMatchAnalysis, fetchScheduleByDate, hasMainOdds } from "@/lib/isports.server";
 import { gradePrediction as _g, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "@/lib/predictions.server";
 
-const BLOCKED_KEYWORDS = ["friendly", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women"];
+const BLOCKED_KEYWORDS = [
+  "friendly", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women",
+  "cup", "copa", "coupe", "pokal", "trophy", "shield", "supercup", "super cup",
+  "amateur", "regional", "lower", "qualifier", "qualifying", "playoff", "play-off",
+  "exhibition", "test match", "invitational", "pre-season", "preseason", "trial",
+];
 const TRUSTED_LEAGUE_PATTERNS = [
   "premier league", "championship", "league one", "league two",
   "la liga", "segunda",
@@ -71,7 +76,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
               const afterTrusted = trustedOnly ? afterBlocked.filter((m) => isTrusted(m.leagueName)) : afterBlocked;
 
               send("status", {
-                message: `Filter breakdown — total ${all.length} → future ${futureOnly.length} → within ${timeframeHours}h ${inWindow.length} → not youth/friendly ${afterBlocked.length} → ${trustedOnly ? "major leagues" : "all leagues"} ${afterTrusted.length}.`,
+                message: `Filter breakdown — total ${all.length} → future ${futureOnly.length} → within ${timeframeHours}h ${inWindow.length} → eligible leagues (no youth/friendly/cup/qualifier/etc) ${afterBlocked.length} → ${trustedOnly ? "major leagues" : "all leagues"} ${afterTrusted.length}.`,
               });
 
               if (!afterTrusted.length) {
