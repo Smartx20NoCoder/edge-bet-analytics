@@ -183,7 +183,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
         analysisId: null,
         matchesAnalyzed: finalCandidates.length,
         skippedExisting,
-        droppedNoOdds,
+        noOddsCount,
         predictionsGenerated: 0,
         date,
       };
@@ -203,7 +203,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
         predictions_generated: finalPreds.length,
         avg_confidence: Math.round(avg * 100) / 100,
         status: "completed",
-        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, droppedNoOdds }),
+        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount }),
       })
       .select()
       .single();
@@ -217,7 +217,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
       analysisId: analysisRow.id,
       matchesAnalyzed: finalCandidates.length,
       skippedExisting,
-      droppedNoOdds,
+      noOddsCount,
       predictionsGenerated: finalPreds.length,
       date,
     };
