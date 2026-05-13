@@ -175,7 +175,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
       });
     }
     if (noOddsCount) console.log(`[runAnalysis] flagged ${noOddsCount} picks with no 1X2 bookmaker odds`);
-    const droppedNoOdds = 0;
+    
 
     // Skip saving empty scans entirely.
     if (!finalPreds.length) {
