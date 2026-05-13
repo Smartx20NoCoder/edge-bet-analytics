@@ -87,20 +87,6 @@ export const runAnalysis = createServerFn({ method: "POST" })
 
     const scanStartedAt = new Date().toISOString();
 
-    const { data: analysisRow, error: aErr } = await supabaseAdmin
-      .from("analyses")
-      .insert({
-        league_id: null,
-        league_name: null,
-        matches_analyzed: finalCandidates.length,
-        predictions_generated: 0,
-        status: "running",
-        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt, skippedExisting }),
-      })
-      .select()
-      .single();
-    if (aErr || !analysisRow) throw new Error(aErr?.message ?? "analysis insert failed");
-
     const predictions: any[] = [];
     const seen = new Set<string>();
 
@@ -157,7 +143,6 @@ export const runAnalysis = createServerFn({ method: "POST" })
         if (best) {
           predictions.push({
             ...best,
-            analysis_id: analysisRow.id,
             match_id: m.matchId,
             home_team: m.homeName,
             away_team: m.awayName,
@@ -171,37 +156,64 @@ export const runAnalysis = createServerFn({ method: "POST" })
       }
     }
 
-    // Apply threshold + implied-odds filter, then keep only the top maxPicks overall.
-    const finalPreds = predictions
+    // Threshold + implied-odds filter, then top maxPicks overall.
+    const passedThreshold = predictions
       .filter((p) => meetsConfidenceThreshold(p.prediction_type, Number(p.confidence)))
       .filter((p) => 100 / Number(p.confidence) >= minOdds)
       .sort((a, b) => Number(b.confidence) - Number(a.confidence))
       .slice(0, maxPicks);
 
-    if (finalPreds.length) {
-      await supabaseAdmin.from("predictions").insert(finalPreds);
+    // Bookmaker availability check (after confidence filter to protect API quota).
+    let droppedNoOdds = 0;
+    const finalPreds: any[] = [];
+    for (const p of passedThreshold) {
+      const ok = await hasMainOdds(String(p.match_id));
+      if (ok) finalPreds.push(p);
+      else droppedNoOdds++;
+    }
+    if (droppedNoOdds) console.log(`[runAnalysis] dropped ${droppedNoOdds} picks lacking 1X2 bookmaker odds`);
+
+    // Skip saving empty scans entirely.
+    if (!finalPreds.length) {
+      return {
+        analysisId: null,
+        matchesAnalyzed: finalCandidates.length,
+        skippedExisting,
+        droppedNoOdds,
+        predictionsGenerated: 0,
+        date,
+      };
     }
 
-    const avg = finalPreds.length
-      ? finalPreds.reduce((s, p) => s + Number(p.confidence), 0) / finalPreds.length
-      : null;
     const distinctLeagues = new Set(
       finalCandidates.map((c) => c.leagueName).filter(Boolean) as string[],
     ).size;
-    await supabaseAdmin
+    const avg = finalPreds.reduce((s, p) => s + Number(p.confidence), 0) / finalPreds.length;
+
+    const { data: analysisRow, error: aErr } = await supabaseAdmin
       .from("analyses")
-      .update({
+      .insert({
+        league_id: null,
+        league_name: null,
+        matches_analyzed: finalCandidates.length,
         predictions_generated: finalPreds.length,
-        avg_confidence: avg ? Math.round(avg * 100) / 100 : null,
+        avg_confidence: Math.round(avg * 100) / 100,
         status: "completed",
-        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, scanStartedAt, distinctLeagues, skippedExisting }),
+        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, droppedNoOdds }),
       })
-      .eq("id", analysisRow.id);
+      .select()
+      .single();
+    if (aErr || !analysisRow) throw new Error(aErr?.message ?? "analysis insert failed");
+
+    await supabaseAdmin
+      .from("predictions")
+      .insert(finalPreds.map((p) => ({ ...p, analysis_id: analysisRow.id })));
 
     return {
       analysisId: analysisRow.id,
       matchesAnalyzed: finalCandidates.length,
       skippedExisting,
+      droppedNoOdds,
       predictionsGenerated: finalPreds.length,
       date,
     };
