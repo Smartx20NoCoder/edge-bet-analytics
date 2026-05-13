@@ -6,9 +6,15 @@ import { gradePrediction, predictCorners, predictMatchOutcomes, meetsConfidenceT
 
 const BLOCKED_KEYWORDS = [
   "friendly", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women",
+  "u-17", "u-18", "u-19", "u-20", "u-21", "u-23",
+  "under-17", "under-18", "under-19", "under-20", "under-21", "under-23",
+  "under 17", "under 18", "under 19", "under 20", "under 21", "under 23",
   "cup", "copa", "coupe", "pokal", "trophy", "shield", "supercup", "super cup",
   "amateur", "regional", "lower", "qualifier", "qualifying", "playoff", "play-off",
   "exhibition", "test match", "invitational", "pre-season", "preseason", "trial",
+  "caf", "afcon", "africa cup", "african cup", "uefa nations", "nations league",
+  "copa america", "gold cup", "concacaf", "conmebol", "afc championship",
+  "asian cup", "oceania", "world cup", "international",
 ];
 
 // Statistically reliable major leagues (name-substring match, lowercase).
