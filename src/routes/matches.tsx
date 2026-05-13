@@ -15,7 +15,11 @@ export const Route = createFileRoute("/matches")({
     meta: [
       { title: "Match Outcome Predictions · BetEdge AI" },
       { name: "description", content: "Match winner, double chance, Asian handicap and Over 1.5 goals predictions from live football analysis." },
+      { property: "og:title", content: "Match Outcome Predictions · BetEdge AI" },
+      { property: "og:description", content: "Form, xG, momentum and league-strength weighted match outcome picks." },
+      { property: "og:url", content: "/matches" },
     ],
+    links: [{ rel: "canonical", href: "/matches" }],
   }),
   component: MatchesPage,
 });
