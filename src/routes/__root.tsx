@@ -74,15 +74,33 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "BetEdge AI — Football Analytics & Prediction Terminal" },
-      { name: "description", content: "Real-time football betting predictions powered by live iSportsAPI data. Corner & match outcome engines with 75%+ confidence discipline." },
       { name: "author", content: "BetEdge AI" },
-      { property: "og:title", content: "BetEdge AI — Football Analytics Terminal" },
-      { property: "og:description", content: "Statistical corner and match-outcome predictions from live football data." },
       { property: "og:type", content: "website" },
+      { property: "og:site_name", content: "BetEdge AI" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
     links: [{ rel: "stylesheet", href: appCss }],
+    scripts: [
+      {
+        type: "application/ld+json",
+        children: JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "Organization",
+          name: "BetEdge AI",
+          url: "/",
+          description: "Football analytics and prediction terminal powered by live iSportsAPI data.",
+        }),
+      },
+      {
+        type: "application/ld+json",
+        children: JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "WebSite",
+          name: "BetEdge AI",
+          url: "/",
+        }),
+      },
+    ],
   }),
   shellComponent: RootShell,
   component: RootComponent,
