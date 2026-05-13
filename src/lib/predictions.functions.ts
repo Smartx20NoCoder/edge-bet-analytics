@@ -163,15 +163,19 @@ export const runAnalysis = createServerFn({ method: "POST" })
       .sort((a, b) => Number(b.confidence) - Number(a.confidence))
       .slice(0, maxPicks);
 
-    // Bookmaker availability check (after confidence filter to protect API quota).
-    let droppedNoOdds = 0;
+    // Bookmaker availability check — annotate, don't drop.
+    let noOddsCount = 0;
     const finalPreds: any[] = [];
     for (const p of passedThreshold) {
       const ok = await hasMainOdds(String(p.match_id));
-      if (ok) finalPreds.push(p);
-      else droppedNoOdds++;
+      if (!ok) noOddsCount++;
+      finalPreds.push({
+        ...p,
+        stats: { ...(p.stats ?? {}), oddsAvailable: ok },
+      });
     }
-    if (droppedNoOdds) console.log(`[runAnalysis] dropped ${droppedNoOdds} picks lacking 1X2 bookmaker odds`);
+    if (noOddsCount) console.log(`[runAnalysis] flagged ${noOddsCount} picks with no 1X2 bookmaker odds`);
+    
 
     // Skip saving empty scans entirely.
     if (!finalPreds.length) {
@@ -179,7 +183,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
         analysisId: null,
         matchesAnalyzed: finalCandidates.length,
         skippedExisting,
-        droppedNoOdds,
+        noOddsCount,
         predictionsGenerated: 0,
         date,
       };
@@ -199,7 +203,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
         predictions_generated: finalPreds.length,
         avg_confidence: Math.round(avg * 100) / 100,
         status: "completed",
-        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, droppedNoOdds }),
+        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount }),
       })
       .select()
       .single();
@@ -213,7 +217,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
       analysisId: analysisRow.id,
       matchesAnalyzed: finalCandidates.length,
       skippedExisting,
-      droppedNoOdds,
+      noOddsCount,
       predictionsGenerated: finalPreds.length,
       date,
     };
