@@ -183,27 +183,57 @@ export const Route = createFileRoute("/api/analyze-stream")({
               }
 
               send("status", { message: "Generating final predictions…" });
-              const finalPreds = predictions
+              const passedThreshold = predictions
                 .filter((p) => meetsConfidenceThreshold(p.prediction_type, Number(p.confidence)))
                 .filter((p) => 100 / Number(p.confidence) >= minOdds)
                 .sort((a, b) => Number(b.confidence) - Number(a.confidence))
                 .slice(0, maxPicks);
-              if (finalPreds.length) await supabaseAdmin.from("predictions").insert(finalPreds);
-              const avg = finalPreds.length
-                ? finalPreds.reduce((s, p) => s + Number(p.confidence), 0) / finalPreds.length
-                : null;
+
+              // Bookmaker availability check (after confidence filter to protect API quota).
+              let droppedNoOdds = 0;
+              const finalPreds: any[] = [];
+              for (const p of passedThreshold) {
+                const ok = await hasMainOdds(String(p.match_id));
+                if (ok) finalPreds.push(p);
+                else droppedNoOdds++;
+              }
+              if (droppedNoOdds) {
+                send("status", { message: `Dropped ${droppedNoOdds} pick(s) with no 1X2 bookmaker odds available.` });
+              }
+
+              if (!finalPreds.length) {
+                send("done", {
+                  analysisId: null,
+                  matchesAnalyzed: candidates.length,
+                  predictionsGenerated: 0,
+                  date,
+                });
+                return;
+              }
+
+              const avg = finalPreds.reduce((s, p) => s + Number(p.confidence), 0) / finalPreds.length;
               const distinctLeagues = new Set(
                 candidates.map((c) => c.leagueName).filter(Boolean) as string[],
               ).size;
-              await supabaseAdmin
+
+              const { data: analysisRow, error: aErr } = await supabaseAdmin
                 .from("analyses")
-                .update({
+                .insert({
+                  league_id: null,
+                  league_name: null,
+                  matches_analyzed: candidates.length,
                   predictions_generated: finalPreds.length,
-                  avg_confidence: avg ? Math.round(avg * 100) / 100 : null,
+                  avg_confidence: Math.round(avg * 100) / 100,
                   status: "completed",
-                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting }),
+                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, droppedNoOdds }),
                 })
-                .eq("id", analysisRow.id);
+                .select()
+                .single();
+              if (aErr || !analysisRow) throw new Error(aErr?.message ?? "analysis insert failed");
+
+              await supabaseAdmin
+                .from("predictions")
+                .insert(finalPreds.map((p) => ({ ...p, analysis_id: analysisRow.id })));
 
               send("done", {
                 analysisId: analysisRow.id,
