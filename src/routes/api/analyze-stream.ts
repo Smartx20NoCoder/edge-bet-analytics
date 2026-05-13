@@ -112,19 +112,6 @@ export const Route = createFileRoute("/api/analyze-stream")({
               });
 
               const scanStartedAt = new Date().toISOString();
-              const { data: analysisRow, error: aErr } = await supabaseAdmin
-                .from("analyses")
-                .insert({
-                  league_id: null,
-                  league_name: null,
-                  matches_analyzed: candidates.length,
-                  predictions_generated: 0,
-                  status: "running",
-                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, skippedExisting }),
-                })
-                .select()
-                .single();
-              if (aErr || !analysisRow) throw new Error(aErr?.message ?? "analysis insert failed");
 
               const predictions: any[] = [];
               const seen = new Set<string>();
