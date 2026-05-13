@@ -172,6 +172,63 @@ export async function fetchScheduleByDate(date: string): Promise<ScheduleMatch[]
     .filter((m: ScheduleMatch) => m.matchId);
 }
 
+/**
+ * Check if a match has 1X2 (home/draw/away) odds available from at least 1 bookmaker.
+ * Uses /odds/main with a 1h cache. Fails open (returns true) on transport errors so
+ * a flaky odds endpoint doesn't wipe out a scan.
+ */
+export async function hasMainOdds(matchId: string): Promise<boolean> {
+  const cacheKey = `__odds_main_${matchId}`;
+  let payload: any;
+  const { data: cached } = await supabaseAdmin
+    .from("analysis_cache")
+    .select("raw, fetched_at")
+    .eq("match_id", cacheKey)
+    .maybeSingle();
+  if (cached && Date.now() - new Date(cached.fetched_at).getTime() < 60 * 60 * 1000) {
+    payload = cached.raw;
+  } else {
+    try {
+      payload = await get<any>("/odds/main", { matchId });
+      await supabaseAdmin.from("analysis_cache").upsert({
+        match_id: cacheKey,
+        raw: payload,
+        fetched_at: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn(`[hasMainOdds] /odds/main failed for ${matchId}, failing open:`, (e as any)?.message);
+      return true;
+    }
+  }
+  // Find any bookmaker entry with a 3-tuple of numeric 1X2 odds.
+  const stack: any[] = [payload?.data ?? payload];
+  let depth = 0;
+  while (stack.length && depth < 5000) {
+    depth++;
+    const node = stack.pop();
+    if (node == null) continue;
+    if (Array.isArray(node)) {
+      // Bookmaker rows often look like [companyId, home, draw, away, ...] or nested arrays.
+      if (node.length >= 3) {
+        // Look for 3 finite numbers >= 1.0 in the first 6 entries (handles different orderings).
+        const nums = node.slice(0, 6).map((v) => Number(v)).filter((n) => Number.isFinite(n) && n >= 1.0);
+        if (nums.length >= 3) return true;
+      }
+      for (const item of node) if (item && typeof item === "object") stack.push(item);
+    } else if (typeof node === "object") {
+      // Common shapes: { europeOdds: { [companyId]: [...] } } or { "1x2": {...} }
+      const keys = Object.keys(node);
+      const oddsKey = keys.find((k) => /europe|1x2|main|moneyline|ml/i.test(k));
+      if (oddsKey && node[oddsKey] && typeof node[oddsKey] === "object") {
+        const inner = node[oddsKey];
+        if (Object.keys(inner).length > 0) return true;
+      }
+      for (const k of keys) stack.push(node[k]);
+    }
+  }
+  return false;
+}
+
 /** Match analysis with 12h cache. Refresh forces a re-fetch. */
 export async function fetchMatchAnalysis(matchId: string, refresh = false): Promise<any> {
   if (!refresh) {
