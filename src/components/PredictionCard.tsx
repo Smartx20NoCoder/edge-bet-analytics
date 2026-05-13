@@ -21,6 +21,7 @@ export type Prediction = {
   total_corners?: number | null;
   ft_status?: string | null;
   is_correct?: boolean | null;
+  stats?: any;
 };
 
 function confColor(c: number) {
