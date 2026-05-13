@@ -342,12 +342,12 @@ function entryIcon(k: LogEntry["kind"]) {
   return <Activity className="h-3.5 w-3.5 mt-0.5 shrink-0" />;
 }
 
-function Field({ label, Icon, children }: { label: string; Icon: any; children: React.ReactNode }) {
+function Field({ label, Icon, children, htmlFor }: { label: string; Icon: any; children: React.ReactNode; htmlFor?: string }) {
   return (
     <div>
-      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">
+      <label htmlFor={htmlFor} className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">
         <Icon className="h-3 w-3" /> {label}
-      </div>
+      </label>
       {children}
     </div>
   );
