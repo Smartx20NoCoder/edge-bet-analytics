@@ -8,8 +8,12 @@ export const Route = createFileRoute("/settings")({
   head: () => ({
     meta: [
       { title: "Settings · BetEdge AI" },
-      { name: "description", content: "API status, integration, and configuration for BetEdge AI." },
+      { name: "description", content: "iSportsAPI status, integration health, and engine configuration for BetEdge AI." },
+      { property: "og:title", content: "Settings · BetEdge AI" },
+      { property: "og:description", content: "API status and engine configuration for BetEdge AI." },
+      { property: "og:url", content: "/settings" },
     ],
+    links: [{ rel: "canonical", href: "/settings" }],
   }),
   component: Settings,
 });
