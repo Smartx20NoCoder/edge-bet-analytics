@@ -162,7 +162,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   const best = filtered[0];
                   if (best) {
                     predictions.push({
-                      ...best, analysis_id: analysisRow.id, match_id: m.matchId,
+                      ...best, match_id: m.matchId,
                       home_team: m.homeName, away_team: m.awayName,
                       league_id: m.leagueId, league_name: m.leagueName,
                       kickoff: new Date(m.matchTime * 1000).toISOString(),
