@@ -249,8 +249,12 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
     ? `Market odds H ${market.oH.toFixed(2)} / D ${market.oD.toFixed(2)} / A ${market.oA.toFixed(2)} → fair P ${(market.pH*100).toFixed(0)}/${(market.pD*100).toFixed(0)}/${(market.pA*100).toFixed(0)}%.`
     : "No bookie odds available — model-only.";
 
-  const winnerConf = Math.round(Math.max(pH, pA) * 1000) / 10;
-  if (winnerConf >= 65 && agree) {
+  // NOTE: this gate (57) MUST stay in sync with CONFIDENCE_THRESHOLDS.match_winner
+  // in this file. If you change one, change the other.
+  const rawWinnerConf = Math.round(Math.max(pH, pA) * 1000) / 10;
+  // Disagreement between model and market doesn't drop the pick — it costs 5 confidence points.
+  const winnerConf = agree ? rawWinnerConf : Math.max(0, Math.round((rawWinnerConf - 5) * 10) / 10);
+  if (winnerConf >= 57) {
     out.push({
       type: "match_winner",
       selection: homeFav ? "Home Win" : "Away Win",
@@ -260,8 +264,9 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
         `Home @ home: ${(homeAtHome.winRate * 100).toFixed(0)}% W / ${(homeAtHome.drawRate * 100).toFixed(0)}% D (${homeAtHome.count} g).`,
         `Away @ away: ${(awayAtAway.winRate * 100).toFixed(0)}% W / ${(awayAtAway.drawRate * 100).toFixed(0)}% D (${awayAtAway.count} g).`,
         marketReason,
+        agree ? "Model and market agree on the favourite." : "⚠️ Model and market disagree on the favourite — confidence penalised by 5 pts.",
       ],
-      stats: { pH, pA, pD, model: { mH, mD, mA }, market },
+      stats: { pH, pA, pD, model: { mH, mD, mA }, market, agree },
     });
   }
 
