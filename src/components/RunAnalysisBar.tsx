@@ -232,7 +232,7 @@ export function RunAnalysisBar() {
       <div className="flex items-center gap-3">
         <Field label={`Max Picks: ${maxPicks}`} Icon={Target}>
           <Slider
-            min={2}
+            min={1}
             max={5}
             step={1}
             value={[maxPicks]}
