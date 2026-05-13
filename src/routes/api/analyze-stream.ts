@@ -3,7 +3,12 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { fetchMatchAnalysis, fetchScheduleByDate, hasMainOdds } from "@/lib/isports.server";
 import { gradePrediction as _g, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "@/lib/predictions.server";
 
-const BLOCKED_KEYWORDS = ["friendly", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women"];
+const BLOCKED_KEYWORDS = [
+  "friendly", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women",
+  "cup", "copa", "coupe", "pokal", "trophy", "shield", "supercup", "super cup",
+  "amateur", "regional", "lower", "qualifier", "qualifying", "playoff", "play-off",
+  "exhibition", "test match", "invitational", "pre-season", "preseason", "trial",
+];
 const TRUSTED_LEAGUE_PATTERNS = [
   "premier league", "championship", "league one", "league two",
   "la liga", "segunda",
