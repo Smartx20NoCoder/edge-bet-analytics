@@ -227,6 +227,11 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
   if (!homeAtHome || !awayAtAway) return [];
   // Require at least 6 games of seasonal data per side before firing.
   if (homeAtHome.count < 6 || awayAtAway.count < 6) return [];
+  // Quality gate: both teams must be strong winners with low draw rates.
+  if (
+    homeAtHome.winRate < 0.60 || homeAtHome.drawRate > 0.25 ||
+    awayAtAway.winRate < 0.60 || awayAtAway.drawRate > 0.25
+  ) return [];
 
   // Model probabilities.
   let mH = 0.6 * homeAtHome.winRate + 0.4 * (1 - awayAtAway.winRate - awayAtAway.drawRate);
