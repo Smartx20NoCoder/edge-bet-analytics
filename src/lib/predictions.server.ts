@@ -86,6 +86,8 @@ export function predictCorners(analysis: AnyObj, homeId?: string, awayId?: strin
   const h = teamCornerAverages(homeRows, homeId);
   const a = teamCornerAverages(awayRows, awayId);
   if (!h || !a) return [];
+  // Require at least 6 games of seasonal data per side before firing.
+  if (h.games < 6 || a.games < 6) return [];
 
   const projected = (h.cFor + a.cAg + a.cFor + h.cAg) / 2;
   const reasons = [
@@ -223,6 +225,8 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
   const homeAtHome = dataVsRates(d.homeDataVs, "home") ?? fallbackFromRows(homeRows, homeId);
   const awayAtAway = dataVsRates(d.awayDataVs, "away") ?? fallbackFromRows(awayRows, awayId);
   if (!homeAtHome || !awayAtAway) return [];
+  // Require at least 6 games of seasonal data per side before firing.
+  if (homeAtHome.count < 6 || awayAtAway.count < 6) return [];
 
   // Model probabilities.
   let mH = 0.6 * homeAtHome.winRate + 0.4 * (1 - awayAtAway.winRate - awayAtAway.drawRate);
