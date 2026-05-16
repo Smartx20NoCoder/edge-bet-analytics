@@ -53,6 +53,13 @@ async function getKeyStatuses() {
 
 function invalidateStatusCache() { statusCache = null; }
 
+// Manual override: when set, get() will use only this key (no failover).
+let forcedKey: 1 | 2 | null = null;
+export function setForcedKey(idx: 1 | 2 | null) {
+  forcedKey = idx;
+  if (idx) console.log(`[iSportsAPI] forced key ${idx} for this request scope`);
+}
+
 async function isExhausted(idx: 1 | 2): Promise<boolean> {
   const rows = await getKeyStatuses();
   const r = rows.find((x) => x.key_index === idx);
@@ -112,6 +119,14 @@ async function tryWithKey<T = any>(idx: 1 | 2, path: string, params: Record<stri
 }
 
 async function get<T = any>(path: string, params: Record<string, string>): Promise<T> {
+  // Manual override: use only the forced key, no failover.
+  if (forcedKey) {
+    const result = await tryWithKey<T>(forcedKey, path, params);
+    if (result.ok) return result.json;
+    if (result.quota) await markExhausted(forcedKey);
+    console.error(`[iSportsAPI] ${path} forced key ${forcedKey} failed: ${result.reason}`);
+    throw new Error(`iSportsAPI ${path} (forced key ${forcedKey}): ${result.reason}`);
+  }
   // Determine starting key: prefer 1, but skip if marked exhausted.
   const primaryExhausted = await isExhausted(1);
   const secondaryExhausted = await isExhausted(2);

@@ -40,6 +40,7 @@ export function RunAnalysisBar() {
   const [refresh, setRefresh] = useState(false);
   const [maxPicks, setMaxPicks] = useState(3);
   const [betType, setBetType] = useState<string>("all");
+  const [apiKey, setApiKey] = useState<1 | 2>(1);
 
   const [open, setOpen] = useState(false);
   const [running, setRunning] = useState(false);
@@ -84,7 +85,7 @@ export function RunAnalysisBar() {
     const params = new URLSearchParams({
       date, timeframeHours: String(timeframeHours), maxMatches: String(maxMatches),
       minOdds: String(minOdds), trustedOnly: String(trustedOnly), refresh: String(refresh),
-      maxPicks: String(maxPicks), betType,
+      maxPicks: String(maxPicks), betType, apiKey: String(apiKey),
     });
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -255,6 +256,18 @@ export function RunAnalysisBar() {
           Force re-fetch analysis (uses extra API calls)
         </label>
         <div className="ml-auto flex items-center gap-3">
+          <div className="inline-flex items-center rounded-md border border-border overflow-hidden" role="group" aria-label="API Key selector">
+            {[1, 2].map((k) => (
+              <button
+                key={k}
+                onClick={() => setApiKey(k as 1 | 2)}
+                className={`px-2.5 h-7 text-[11px] font-mono transition-colors ${apiKey === k ? "bg-neon/15 text-neon" : "text-muted-foreground hover:text-foreground"}`}
+                title={`Force this scan to use API Key ${k} only`}
+              >
+                API {k}
+              </button>
+            ))}
+          </div>
           <span className={`inline-flex items-center gap-1.5 px-2 h-7 rounded-md border text-[11px] font-mono ${
             (usage.data?.count ?? 0) >= (usage.data?.limit ?? 200) * 0.9
               ? "border-destructive/40 text-destructive bg-destructive/10"

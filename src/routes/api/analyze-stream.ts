@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { fetchMatchAnalysis, fetchScheduleByDate, hasMainOdds } from "@/lib/isports.server";
+import { fetchMatchAnalysis, fetchScheduleByDate, hasMainOdds, setForcedKey } from "@/lib/isports.server";
 import { gradePrediction as _g, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "@/lib/predictions.server";
 
 const BLOCKED_KEYWORDS = [
@@ -47,7 +47,9 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const cornerTypes = new Set(["over_6_5_corners","over_7_5_corners"]);
         const matchTypes = new Set(["match_winner","double_chance","asian_handicap","over_1_5_goals"]);
         const runCorners = betType === "all" || cornerTypes.has(betType);
-        const runMatch = betType === "all" || matchTypes.has(betType);
+                const runMatch = betType === "all" || matchTypes.has(betType);
+        const apiKeyParam = url.searchParams.get("apiKey");
+        const forcedKey: 1 | 2 | null = apiKeyParam === "1" ? 1 : apiKeyParam === "2" ? 2 : null;
 
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
@@ -60,6 +62,10 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 send("error", { message: "ISPORTS_API_KEY is not configured on the server. Add it as a secret and retry." });
                 controller.close();
                 return;
+              }
+              if (forcedKey) {
+                setForcedKey(forcedKey);
+                send("status", { message: `Using API Key ${forcedKey} only (manual override — failover disabled).` });
               }
 
               send("status", { message: `Fetching fixtures for ${date}…` });
@@ -258,6 +264,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
             } catch (e: any) {
               send("error", { message: e?.message ?? "scan failed" });
             } finally {
+              if (forcedKey) setForcedKey(null);
               controller.close();
             }
           },
