@@ -63,6 +63,10 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 controller.close();
                 return;
               }
+              if (forcedKey) {
+                setForcedKey(forcedKey);
+                send("status", { message: `Using API Key ${forcedKey} only (manual override — failover disabled).` });
+              }
 
               send("status", { message: `Fetching fixtures for ${date}…` });
               let all: Awaited<ReturnType<typeof fetchScheduleByDate>>;
