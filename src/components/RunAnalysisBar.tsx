@@ -40,6 +40,7 @@ export function RunAnalysisBar() {
   const [refresh, setRefresh] = useState(false);
   const [maxPicks, setMaxPicks] = useState(3);
   const [betType, setBetType] = useState<string>("all");
+  const [apiKey, setApiKey] = useState<1 | 2>(1);
 
   const [open, setOpen] = useState(false);
   const [running, setRunning] = useState(false);
