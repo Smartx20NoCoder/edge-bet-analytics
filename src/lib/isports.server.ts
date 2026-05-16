@@ -135,9 +135,11 @@ async function get<T = any>(path: string, params: Record<string, string>): Promi
       await markExhausted(idx);
       // If we just exhausted key 1 and key 2 is available, log a failover.
       if (idx === 1 && i + 1 < order.length && !attemptedFailover) {
-        const otherK = keyForIndex(order[i + 1]);
+        const nextIdx = order[i + 1];
+        const otherK = keyForIndex(nextIdx);
         if (otherK) {
           attemptedFailover = true;
+          console.log(`[iSportsAPI] switching to key ${nextIdx} after key 1 quota`);
           await recordFailover();
         }
       }
