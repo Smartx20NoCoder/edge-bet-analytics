@@ -53,6 +53,13 @@ async function getKeyStatuses() {
 
 function invalidateStatusCache() { statusCache = null; }
 
+// Manual override: when set, get() will use only this key (no failover).
+let forcedKey: 1 | 2 | null = null;
+export function setForcedKey(idx: 1 | 2 | null) {
+  forcedKey = idx;
+  if (idx) console.log(`[iSportsAPI] forced key ${idx} for this request scope`);
+}
+
 async function isExhausted(idx: 1 | 2): Promise<boolean> {
   const rows = await getKeyStatuses();
   const r = rows.find((x) => x.key_index === idx);
