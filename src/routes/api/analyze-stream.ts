@@ -264,6 +264,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
             } catch (e: any) {
               send("error", { message: e?.message ?? "scan failed" });
             } finally {
+              if (forcedKey) setForcedKey(null);
               controller.close();
             }
           },
