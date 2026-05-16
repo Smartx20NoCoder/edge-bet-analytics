@@ -12,11 +12,43 @@ function keyForIndex(idx: 1 | 2): string | undefined {
 let statusCache: { fetchedAt: number; rows: { key_index: number; exhausted_at: string | null; active: boolean }[] } | null = null;
 const STATUS_TTL_MS = 30_000;
 
+function utcDayKey(d: Date): string {
+  return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+}
+
 async function getKeyStatuses() {
   if (statusCache && Date.now() - statusCache.fetchedAt < STATUS_TTL_MS) return statusCache.rows;
   const { data } = await supabaseAdmin.from("api_key_status").select("key_index, exhausted_at, active");
-  statusCache = { fetchedAt: Date.now(), rows: (data ?? []) as any };
-  return statusCache.rows;
+  let rows = (data ?? []) as { key_index: number; exhausted_at: string | null; active: boolean }[];
+
+  // Ensure both rows exist.
+  const missing: number[] = [];
+  for (const idx of [1, 2]) {
+    if (!rows.find((r) => r.key_index === idx)) missing.push(idx);
+  }
+  if (missing.length) {
+    await supabaseAdmin.from("api_key_status").upsert(
+      missing.map((key_index) => ({ key_index, active: true, exhausted_at: null, updated_at: new Date().toISOString() })),
+    );
+    for (const key_index of missing) rows.push({ key_index, active: true, exhausted_at: null });
+  }
+
+  // Daily auto-reset: if exhausted_at is from a previous UTC day, clear it.
+  const today = utcDayKey(new Date());
+  const toReset = rows.filter((r) => r.exhausted_at && utcDayKey(new Date(r.exhausted_at)) !== today);
+  if (toReset.length) {
+    await supabaseAdmin.from("api_key_status").upsert(
+      toReset.map((r) => ({ key_index: r.key_index, active: true, exhausted_at: null, updated_at: new Date().toISOString() })),
+    );
+    for (const r of toReset) {
+      r.active = true;
+      r.exhausted_at = null;
+      console.log(`[iSportsAPI] daily reset for key ${r.key_index}`);
+    }
+  }
+
+  statusCache = { fetchedAt: Date.now(), rows };
+  return rows;
 }
 
 function invalidateStatusCache() { statusCache = null; }
@@ -103,9 +135,11 @@ async function get<T = any>(path: string, params: Record<string, string>): Promi
       await markExhausted(idx);
       // If we just exhausted key 1 and key 2 is available, log a failover.
       if (idx === 1 && i + 1 < order.length && !attemptedFailover) {
-        const otherK = keyForIndex(order[i + 1]);
+        const nextIdx = order[i + 1];
+        const otherK = keyForIndex(nextIdx);
         if (otherK) {
           attemptedFailover = true;
+          console.log(`[iSportsAPI] switching to key ${nextIdx} after key 1 quota`);
           await recordFailover();
         }
       }
