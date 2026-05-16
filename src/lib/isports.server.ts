@@ -119,6 +119,14 @@ async function tryWithKey<T = any>(idx: 1 | 2, path: string, params: Record<stri
 }
 
 async function get<T = any>(path: string, params: Record<string, string>): Promise<T> {
+  // Manual override: use only the forced key, no failover.
+  if (forcedKey) {
+    const result = await tryWithKey<T>(forcedKey, path, params);
+    if (result.ok) return result.json;
+    if (result.quota) await markExhausted(forcedKey);
+    console.error(`[iSportsAPI] ${path} forced key ${forcedKey} failed: ${result.reason}`);
+    throw new Error(`iSportsAPI ${path} (forced key ${forcedKey}): ${result.reason}`);
+  }
   // Determine starting key: prefer 1, but skip if marked exhausted.
   const primaryExhausted = await isExhausted(1);
   const secondaryExhausted = await isExhausted(2);
