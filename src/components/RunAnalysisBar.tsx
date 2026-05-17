@@ -235,30 +235,38 @@ export function RunAnalysisBar() {
             className="h-9 w-full rounded-md bg-secondary border border-border px-3 text-sm font-mono"
           />
         </Field>
-        <Field label="Min Implied Odds" Icon={TrendingUp} htmlFor="scan-min-odds">
-          <input
-            id="scan-min-odds"
-            type="number"
-            step="0.05"
+        <Field label={`Odds Range: ${minOdds.toFixed(2)} – ${maxOdds.toFixed(2)}`} Icon={TrendingUp}>
+          <Slider
             min={1}
-            max={5}
-            value={minOdds}
-            onChange={(e) => setMinOdds(Math.max(1, Math.min(5, Number(e.target.value) || 1)))}
-            className="h-9 w-full rounded-md bg-secondary border border-border px-3 text-sm font-mono"
+            max={10}
+            step={0.05}
+            value={[minOdds, maxOdds]}
+            onValueChange={(v) => {
+              const [lo, hi] = v;
+              setMinOdds(Math.min(lo ?? 1, hi ?? 10));
+              setMaxOdds(Math.max(lo ?? 1, hi ?? 10));
+            }}
+            aria-label="Odds range"
+            className="mt-2"
           />
         </Field>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Field label={`Max Picks: ${maxPicks}`} Icon={Target}>
-          <Slider
-            min={1}
-            max={5}
-            step={1}
-            value={[maxPicks]}
-            onValueChange={(v) => setMaxPicks(v[0] ?? 3)}
-            aria-label="Max Picks"
-            className="mt-2"
-          />
+          <Slider min={1} max={5} step={1} value={[maxPicks]}
+            onValueChange={(v) => setMaxPicks(v[0] ?? 3)} className="mt-2" />
+        </Field>
+        <Field label={`MW Win Rate Floor: ${winRateFloor}%`} Icon={Target}>
+          <Slider min={40} max={70} step={1} value={[winRateFloor]}
+            onValueChange={(v) => setWinRateFloor(v[0] ?? 50)} className="mt-2" />
+        </Field>
+        <Field label={`MW Draw Rate Ceiling: ${drawRateCeil}%`} Icon={Target}>
+          <Slider min={10} max={50} step={1} value={[drawRateCeil]}
+            onValueChange={(v) => setDrawRateCeil(v[0] ?? 30)} className="mt-2" />
+        </Field>
+        <Field label={`Over 1.5 Confidence Floor: ${over15Floor}%`} Icon={Target}>
+          <Slider min={50} max={95} step={1} value={[over15Floor]}
+            onValueChange={(v) => setOver15Floor(v[0] ?? 75)} className="mt-2" />
         </Field>
       </div>
       <div className="flex flex-wrap items-center gap-3">
