@@ -5,7 +5,7 @@ import { fetchMatchAnalysis, fetchResultsByDate, fetchScheduleByDate, hasMainOdd
 import { gradePrediction, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "./predictions.server";
 
 const BLOCKED_KEYWORDS = [
-  "friendly", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women",
+  "friendly", "futsal", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women",
   "u-17", "u-18", "u-19", "u-20", "u-21", "u-23",
   "under-17", "under-18", "under-19", "under-20", "under-21", "under-23",
   "under 17", "under 18", "under 19", "under 20", "under 21", "under 23",
