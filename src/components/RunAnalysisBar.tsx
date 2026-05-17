@@ -36,10 +36,14 @@ export function RunAnalysisBar() {
   const [timeframeHours, setTimeframeHours] = useState(6);
   const [maxMatches, setMaxMatches] = useState(15);
   const [minOdds, setMinOdds] = useState(1.15);
+  const [maxOdds, setMaxOdds] = useState(5);
   const [trustedOnly, setTrustedOnly] = useState(true);
   const [refresh, setRefresh] = useState(false);
   const [maxPicks, setMaxPicks] = useState(3);
   const [betType, setBetType] = useState<string>("all");
+  const [winRateFloor, setWinRateFloor] = useState(50); // percent
+  const [drawRateCeil, setDrawRateCeil] = useState(30); // percent
+  const [over15Floor, setOver15Floor] = useState(75);   // percent
   const [apiKey, setApiKey] = useState<1 | 2>(() => {
     if (typeof window === "undefined") return 1;
     const v = window.localStorage.getItem("betedge.apiKey");
