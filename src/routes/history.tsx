@@ -56,7 +56,11 @@ function HistoryPage() {
   const [typeFilter, setTypeFilter] = useState("all");
 
   const updateMut = useMutation({
-    mutationFn: () => updateAll(),
+    mutationFn: () => {
+      const v = typeof window !== "undefined" ? window.localStorage.getItem("betedge.apiKey") : null;
+      const apiKey: 1 | 2 = v === "2" ? 2 : 1;
+      return updateAll({ data: { apiKey } });
+    },
     onSuccess: (r: any) => {
       const msg = `Updated ${r.updated} result${r.updated === 1 ? "" : "s"} across ${r.dates} date${r.dates === 1 ? "" : "s"}. ${r.stillPending} match${r.stillPending === 1 ? "" : "es"} still pending.`;
       if (r.updated === 0) toast.warning(msg);

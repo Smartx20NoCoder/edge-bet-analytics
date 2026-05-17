@@ -1,11 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { fetchMatchAnalysis, fetchResultsByDate, fetchScheduleByDate, hasMainOdds } from "./isports.server";
+import { fetchMatchAnalysis, fetchResultsByDate, fetchScheduleByDate, hasMainOdds, setForcedKey } from "./isports.server";
 import { gradePrediction, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "./predictions.server";
 
 const BLOCKED_KEYWORDS = [
-  "friendly", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women",
+  "friendly", "futsal", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women",
   "u-17", "u-18", "u-19", "u-20", "u-21", "u-23",
   "under-17", "under-18", "under-19", "under-20", "under-21", "under-23",
   "under 17", "under 18", "under 19", "under 20", "under 21", "under 23",
@@ -442,7 +442,12 @@ export const updateResults = createServerFn({ method: "POST" })
     return { updated, skipped, noResultFound };
   });
 
-export const updateAllPendingResults = createServerFn({ method: "POST" }).handler(async () => {
+export const updateAllPendingResults = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ apiKey: z.union([z.literal(1), z.literal(2)]).optional() }).parse(d ?? {}))
+  .handler(async ({ data }) => {
+  const forced = data.apiKey ?? null;
+  if (forced) setForcedKey(forced);
+  try {
   const { data: preds, error } = await supabaseAdmin
     .from("predictions")
     .select("*")
@@ -482,6 +487,9 @@ export const updateAllPendingResults = createServerFn({ method: "POST" }).handle
       updated++;
     }
   }
-  console.log(`[updateAllPendingResults] scanned=${preds.length} updated=${updated} stillPending=${stillPending} dates=${dates.length}`);
+  console.log(`[updateAllPendingResults] scanned=${preds.length} updated=${updated} stillPending=${stillPending} dates=${dates.length} forcedKey=${forced ?? "auto"}`);
   return { updated, stillPending, dates: dates.length, totalScanned: preds.length };
+  } finally {
+    if (forced) setForcedKey(null);
+  }
 });
