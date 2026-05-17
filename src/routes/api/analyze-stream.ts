@@ -206,8 +206,11 @@ export const Route = createFileRoute("/api/analyze-stream")({
 
               send("status", { message: "Generating final predictions…" });
               const passedThreshold = predictions
-                .filter((p) => meetsConfidenceThreshold(p.prediction_type, Number(p.confidence)))
-                .filter((p) => 100 / Number(p.confidence) >= minOdds)
+                .filter((p) => p.prediction_type === "over_1_5_goals" ? Number(p.confidence) >= over15Floor : meetsConfidenceThreshold(p.prediction_type, Number(p.confidence)))
+                .filter((p) => {
+                  const implied = 100 / Number(p.confidence);
+                  return implied >= minOdds && implied <= maxOdds;
+                })
                 .sort((a, b) => Number(b.confidence) - Number(a.confidence))
                 .slice(0, maxPicks);
 
