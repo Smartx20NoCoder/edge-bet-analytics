@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { fetchMatchAnalysis, fetchResultsByDate, fetchScheduleByDate, hasMainOdds } from "./isports.server";
+import { fetchMatchAnalysis, fetchResultsByDate, fetchScheduleByDate, hasMainOdds, setForcedKey } from "./isports.server";
 import { gradePrediction, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "./predictions.server";
 
 const BLOCKED_KEYWORDS = [
