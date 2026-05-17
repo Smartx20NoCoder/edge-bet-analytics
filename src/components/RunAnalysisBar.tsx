@@ -36,10 +36,14 @@ export function RunAnalysisBar() {
   const [timeframeHours, setTimeframeHours] = useState(6);
   const [maxMatches, setMaxMatches] = useState(15);
   const [minOdds, setMinOdds] = useState(1.15);
+  const [maxOdds, setMaxOdds] = useState(5);
   const [trustedOnly, setTrustedOnly] = useState(true);
   const [refresh, setRefresh] = useState(false);
   const [maxPicks, setMaxPicks] = useState(3);
   const [betType, setBetType] = useState<string>("all");
+  const [winRateFloor, setWinRateFloor] = useState(50); // percent
+  const [drawRateCeil, setDrawRateCeil] = useState(30); // percent
+  const [over15Floor, setOver15Floor] = useState(75);   // percent
   const [apiKey, setApiKey] = useState<1 | 2>(() => {
     if (typeof window === "undefined") return 1;
     const v = window.localStorage.getItem("betedge.apiKey");
@@ -91,8 +95,12 @@ export function RunAnalysisBar() {
 
     const params = new URLSearchParams({
       date, timeframeHours: String(timeframeHours), maxMatches: String(maxMatches),
-      minOdds: String(minOdds), trustedOnly: String(trustedOnly), refresh: String(refresh),
+      minOdds: String(minOdds), maxOdds: String(maxOdds),
+      trustedOnly: String(trustedOnly), refresh: String(refresh),
       maxPicks: String(maxPicks), betType, apiKey: String(apiKey),
+      winRateFloor: String(winRateFloor / 100),
+      drawRateCeil: String(drawRateCeil / 100),
+      over15Floor: String(over15Floor),
     });
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -227,30 +235,38 @@ export function RunAnalysisBar() {
             className="h-9 w-full rounded-md bg-secondary border border-border px-3 text-sm font-mono"
           />
         </Field>
-        <Field label="Min Implied Odds" Icon={TrendingUp} htmlFor="scan-min-odds">
-          <input
-            id="scan-min-odds"
-            type="number"
-            step="0.05"
+        <Field label={`Odds Range: ${minOdds.toFixed(2)} – ${maxOdds.toFixed(2)}`} Icon={TrendingUp}>
+          <Slider
             min={1}
-            max={5}
-            value={minOdds}
-            onChange={(e) => setMinOdds(Math.max(1, Math.min(5, Number(e.target.value) || 1)))}
-            className="h-9 w-full rounded-md bg-secondary border border-border px-3 text-sm font-mono"
+            max={10}
+            step={0.05}
+            value={[minOdds, maxOdds]}
+            onValueChange={(v) => {
+              const [lo, hi] = v;
+              setMinOdds(Math.min(lo ?? 1, hi ?? 10));
+              setMaxOdds(Math.max(lo ?? 1, hi ?? 10));
+            }}
+            aria-label="Odds range"
+            className="mt-2"
           />
         </Field>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Field label={`Max Picks: ${maxPicks}`} Icon={Target}>
-          <Slider
-            min={1}
-            max={5}
-            step={1}
-            value={[maxPicks]}
-            onValueChange={(v) => setMaxPicks(v[0] ?? 3)}
-            aria-label="Max Picks"
-            className="mt-2"
-          />
+          <Slider min={1} max={5} step={1} value={[maxPicks]}
+            onValueChange={(v) => setMaxPicks(v[0] ?? 3)} className="mt-2" />
+        </Field>
+        <Field label={`MW Win Rate Floor: ${winRateFloor}%`} Icon={Target}>
+          <Slider min={40} max={70} step={1} value={[winRateFloor]}
+            onValueChange={(v) => setWinRateFloor(v[0] ?? 50)} className="mt-2" />
+        </Field>
+        <Field label={`MW Draw Rate Ceiling: ${drawRateCeil}%`} Icon={Target}>
+          <Slider min={10} max={50} step={1} value={[drawRateCeil]}
+            onValueChange={(v) => setDrawRateCeil(v[0] ?? 30)} className="mt-2" />
+        </Field>
+        <Field label={`Over 1.5 Confidence Floor: ${over15Floor}%`} Icon={Target}>
+          <Slider min={50} max={95} step={1} value={[over15Floor]}
+            onValueChange={(v) => setOver15Floor(v[0] ?? 75)} className="mt-2" />
         </Field>
       </div>
       <div className="flex flex-wrap items-center gap-3">

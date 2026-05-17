@@ -217,7 +217,16 @@ function extractMarketProbs(analysis: AnyObj): { pH: number; pD: number; pA: num
   return undefined;
 }
 
-export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?: string): MatchPrediction[] {
+export type MatchThresholds = {
+  winRateFloor?: number;   // 0..1, default 0.50
+  drawRateCeil?: number;   // 0..1, default 0.30
+  over15Floor?: number;    // 0..100, default 75
+};
+
+export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?: string, thresholds: MatchThresholds = {}): MatchPrediction[] {
+  const winRateFloor = thresholds.winRateFloor ?? 0.50;
+  const drawRateCeil = thresholds.drawRateCeil ?? 0.30;
+  const over15Floor = thresholds.over15Floor ?? 75;
   const d = root(analysis);
   const homeRows = parseRows(d.homeLastMatches);
   const awayRows = parseRows(d.awayLastMatches);
@@ -261,7 +270,7 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
   const selection = homeFav ? "Home Win" : "Away Win";
   // Quality gate: only the predicted winner's seasonal record must clear the bar.
   const winnerRecord = homeFav ? homeAtHome : awayAtAway;
-  const winnerRecordOk = winnerRecord.winRate >= 0.50 && winnerRecord.drawRate <= 0.30;
+  const winnerRecordOk = winnerRecord.winRate >= winRateFloor && winnerRecord.drawRate <= drawRateCeil;
   if (winnerConf >= 57 && winnerRecordOk) {
     out.push({
       type: "match_winner",
@@ -315,7 +324,7 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
     const p01 = poissonP(0, lamH) * poissonP(1, lamA);
     const pOver15 = Math.max(0, 1 - p00 - p10 - p01);
     const ov15 = Math.round(pOver15 * 1000) / 10;
-    if (ov15 >= 75) {
+    if (ov15 >= over15Floor) {
       out.push({
         type: "over_1_5_goals",
         selection: "Over 1.5 Goals",

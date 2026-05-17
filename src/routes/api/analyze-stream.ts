@@ -50,6 +50,11 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 const runMatch = betType === "all" || matchTypes.has(betType);
         const apiKeyParam = url.searchParams.get("apiKey");
         const forcedKey: 1 | 2 | null = apiKeyParam === "1" ? 1 : apiKeyParam === "2" ? 2 : null;
+        const maxOdds = Number(url.searchParams.get("maxOdds") ?? 100);
+        const winRateFloor = Math.max(0, Math.min(1, Number(url.searchParams.get("winRateFloor") ?? 0.50)));
+        const drawRateCeil = Math.max(0, Math.min(1, Number(url.searchParams.get("drawRateCeil") ?? 0.30)));
+        const over15Floor = Math.max(0, Math.min(100, Number(url.searchParams.get("over15Floor") ?? 75)));
+        const matchThresholds = { winRateFloor, drawRateCeil, over15Floor };
 
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
@@ -160,7 +165,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     fetched_at: new Date().toISOString(),
                   });
                   const corners = runCorners ? predictCorners(analysis, m.homeId, m.awayId) : [];
-                  const matchPreds = runMatch ? predictMatchOutcomes(analysis, m.homeId, m.awayId) : [];
+                  const matchPreds = runMatch ? predictMatchOutcomes(analysis, m.homeId, m.awayId, matchThresholds) : [];
                   const collected: any[] = [];
                   for (const c of corners) collected.push({
                     engine: "corners", prediction_type: c.type, selection: c.selection,
@@ -201,8 +206,11 @@ export const Route = createFileRoute("/api/analyze-stream")({
 
               send("status", { message: "Generating final predictions…" });
               const passedThreshold = predictions
-                .filter((p) => meetsConfidenceThreshold(p.prediction_type, Number(p.confidence)))
-                .filter((p) => 100 / Number(p.confidence) >= minOdds)
+                .filter((p) => p.prediction_type === "over_1_5_goals" ? Number(p.confidence) >= over15Floor : meetsConfidenceThreshold(p.prediction_type, Number(p.confidence)))
+                .filter((p) => {
+                  const implied = 100 / Number(p.confidence);
+                  return implied >= minOdds && implied <= maxOdds;
+                })
                 .sort((a, b) => Number(b.confidence) - Number(a.confidence))
                 .slice(0, maxPicks);
 
@@ -245,7 +253,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   predictions_generated: finalPreds.length,
                   avg_confidence: Math.round(avg * 100) / 100,
                   status: "completed",
-                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount }),
+                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount, winRateFloor, drawRateCeil, over15Floor }),
                 })
                 .select()
                 .single();
