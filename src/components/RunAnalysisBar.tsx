@@ -40,7 +40,14 @@ export function RunAnalysisBar() {
   const [refresh, setRefresh] = useState(false);
   const [maxPicks, setMaxPicks] = useState(3);
   const [betType, setBetType] = useState<string>("all");
-  const [apiKey, setApiKey] = useState<1 | 2>(1);
+  const [apiKey, setApiKey] = useState<1 | 2>(() => {
+    if (typeof window === "undefined") return 1;
+    const v = window.localStorage.getItem("betedge.apiKey");
+    return v === "2" ? 2 : 1;
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") window.localStorage.setItem("betedge.apiKey", String(apiKey));
+  }, [apiKey]);
 
   const [open, setOpen] = useState(false);
   const [running, setRunning] = useState(false);
