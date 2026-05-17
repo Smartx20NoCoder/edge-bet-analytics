@@ -270,7 +270,7 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
   const selection = homeFav ? "Home Win" : "Away Win";
   // Quality gate: only the predicted winner's seasonal record must clear the bar.
   const winnerRecord = homeFav ? homeAtHome : awayAtAway;
-  const winnerRecordOk = winnerRecord.winRate >= 0.50 && winnerRecord.drawRate <= 0.30;
+  const winnerRecordOk = winnerRecord.winRate >= winRateFloor && winnerRecord.drawRate <= drawRateCeil;
   if (winnerConf >= 57 && winnerRecordOk) {
     out.push({
       type: "match_winner",
