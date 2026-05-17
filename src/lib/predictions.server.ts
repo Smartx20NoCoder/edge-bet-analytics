@@ -217,7 +217,16 @@ function extractMarketProbs(analysis: AnyObj): { pH: number; pD: number; pA: num
   return undefined;
 }
 
-export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?: string): MatchPrediction[] {
+export type MatchThresholds = {
+  winRateFloor?: number;   // 0..1, default 0.50
+  drawRateCeil?: number;   // 0..1, default 0.30
+  over15Floor?: number;    // 0..100, default 75
+};
+
+export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?: string, thresholds: MatchThresholds = {}): MatchPrediction[] {
+  const winRateFloor = thresholds.winRateFloor ?? 0.50;
+  const drawRateCeil = thresholds.drawRateCeil ?? 0.30;
+  const over15Floor = thresholds.over15Floor ?? 75;
   const d = root(analysis);
   const homeRows = parseRows(d.homeLastMatches);
   const awayRows = parseRows(d.awayLastMatches);
