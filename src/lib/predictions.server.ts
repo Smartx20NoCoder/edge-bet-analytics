@@ -324,7 +324,7 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
     const p01 = poissonP(0, lamH) * poissonP(1, lamA);
     const pOver15 = Math.max(0, 1 - p00 - p10 - p01);
     const ov15 = Math.round(pOver15 * 1000) / 10;
-    if (ov15 >= 75) {
+    if (ov15 >= over15Floor) {
       out.push({
         type: "over_1_5_goals",
         selection: "Over 1.5 Goals",
