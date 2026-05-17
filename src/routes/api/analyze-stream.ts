@@ -50,6 +50,11 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 const runMatch = betType === "all" || matchTypes.has(betType);
         const apiKeyParam = url.searchParams.get("apiKey");
         const forcedKey: 1 | 2 | null = apiKeyParam === "1" ? 1 : apiKeyParam === "2" ? 2 : null;
+        const maxOdds = Number(url.searchParams.get("maxOdds") ?? 100);
+        const winRateFloor = Math.max(0, Math.min(1, Number(url.searchParams.get("winRateFloor") ?? 0.50)));
+        const drawRateCeil = Math.max(0, Math.min(1, Number(url.searchParams.get("drawRateCeil") ?? 0.30)));
+        const over15Floor = Math.max(0, Math.min(100, Number(url.searchParams.get("over15Floor") ?? 75)));
+        const matchThresholds = { winRateFloor, drawRateCeil, over15Floor };
 
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
