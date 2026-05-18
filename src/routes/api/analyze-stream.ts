@@ -178,22 +178,22 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     confidence: p.confidence, risk_level: p.riskLevel, reasons: p.reasons,
                     stats: p.stats, recommendation: `Lean ${p.selection} (${p.confidence}% model confidence).`,
                   });
-                  // Restrict to selected bet type if a specific one was chosen.
-                  const filtered = betType === "all" ? collected : collected.filter((x) => x.prediction_type === betType);
-                  filtered.sort((a, b) => Number(b.confidence) - Number(a.confidence));
-                  const best = filtered[0];
-                  if (best) {
+                  // Keep ALL qualifying picks across all 4 engines for this match.
+                  // betType is no longer used to restrict storage — clients filter per-cell in the table.
+                  let kept = 0;
+                  for (const x of collected) {
                     predictions.push({
-                      ...best, match_id: m.matchId,
+                      ...x, match_id: m.matchId,
                       home_team: m.homeName, away_team: m.awayName,
                       league_id: m.leagueId, league_name: m.leagueName,
                       kickoff: new Date(m.matchTime * 1000).toISOString(),
                     });
+                    kept++;
                   }
                   send("match_done", {
                     index: i + 1, total: candidates.length,
                     home: m.homeName, away: m.awayName,
-                    picks: best ? 1 : 0,
+                    picks: kept,
                   });
                 } catch (e: any) {
                   send("match_error", {
@@ -211,8 +211,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   const implied = 100 / Number(p.confidence);
                   return implied >= minOdds && implied <= maxOdds;
                 })
-                .sort((a, b) => Number(b.confidence) - Number(a.confidence))
-                .slice(0, maxPicks);
+                .sort((a, b) => Number(b.confidence) - Number(a.confidence));
 
               // Bookmaker availability check — annotate, don't drop.
               let noOddsCount = 0;
