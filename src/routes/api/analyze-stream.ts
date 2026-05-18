@@ -35,26 +35,26 @@ export const Route = createFileRoute("/api/analyze-stream")({
       GET: async ({ request }) => {
         const url = new URL(request.url);
         const date = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
-        const timeframeHours = Number(url.searchParams.get("timeframeHours") ?? 6);
-        const maxMatches = Number(url.searchParams.get("maxMatches") ?? 15);
+        const timeframeHours = Number(url.searchParams.get("timeframeHours") ?? 12);
+        const maxMatches = Math.max(1, Math.min(80, Number(url.searchParams.get("maxMatches") ?? 50)));
         const minOdds = Number(url.searchParams.get("minOdds") ?? 1);
-        const maxPicks = Math.max(1, Math.min(10, Number(url.searchParams.get("maxPicks") ?? 3)));
         const trustedOnly = url.searchParams.get("trustedOnly") !== "false";
         const refresh = url.searchParams.get("refresh") === "true";
         const VALID_BET_TYPES = ["all","match_winner","double_chance","asian_handicap","over_1_5_goals","over_6_5_corners","over_7_5_corners"] as const;
         const rawBet = (url.searchParams.get("betType") ?? "all").toLowerCase();
         const betType = (VALID_BET_TYPES as readonly string[]).includes(rawBet) ? rawBet : "all";
-        const cornerTypes = new Set(["over_6_5_corners","over_7_5_corners"]);
-        const matchTypes = new Set(["match_winner","double_chance","asian_handicap","over_1_5_goals"]);
-        const runCorners = betType === "all" || cornerTypes.has(betType);
-                const runMatch = betType === "all" || matchTypes.has(betType);
+        // Always run all engines; the betType is only used as an optional cell filter on the client.
+        const runCorners = true;
+        const runMatch = true;
         const apiKeyParam = url.searchParams.get("apiKey");
         const forcedKey: 1 | 2 | null = apiKeyParam === "1" ? 1 : apiKeyParam === "2" ? 2 : null;
         const maxOdds = Number(url.searchParams.get("maxOdds") ?? 100);
-        const winRateFloor = Math.max(0, Math.min(1, Number(url.searchParams.get("winRateFloor") ?? 0.50)));
-        const drawRateCeil = Math.max(0, Math.min(1, Number(url.searchParams.get("drawRateCeil") ?? 0.30)));
-        const over15Floor = Math.max(0, Math.min(100, Number(url.searchParams.get("over15Floor") ?? 75)));
-        const matchThresholds = { winRateFloor, drawRateCeil, over15Floor };
+        const winRateFloor = Math.max(0, Math.min(1, Number(url.searchParams.get("winRateFloor") ?? 0.45)));
+        const drawRateCeil = Math.max(0, Math.min(1, Number(url.searchParams.get("drawRateCeil") ?? 0.35)));
+        const over15Floor = Math.max(0, Math.min(100, Number(url.searchParams.get("over15Floor") ?? 60)));
+        const matchWinnerFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("matchWinnerFloor") ?? 52)));
+        const doubleChanceFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("doubleChanceFloor") ?? 65)));
+        const matchThresholds = { winRateFloor, drawRateCeil, over15Floor, matchWinnerFloor, doubleChanceFloor };
 
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
