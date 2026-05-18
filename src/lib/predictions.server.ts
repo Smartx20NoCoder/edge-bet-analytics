@@ -266,38 +266,35 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
     ? `Market odds H ${market.oH.toFixed(2)} / D ${market.oD.toFixed(2)} / A ${market.oA.toFixed(2)} → fair P ${(market.pH*100).toFixed(0)}/${(market.pD*100).toFixed(0)}/${(market.pA*100).toFixed(0)}%.`
     : "No bookie odds available — model-only.";
 
-  // NOTE: this gate (57) MUST stay in sync with CONFIDENCE_THRESHOLDS.match_winner
-  // in this file. If you change one, change the other.
+  // Match winner threshold (default 52%) — keep market sanity check.
   const rawWinnerConf = Math.round(Math.max(pH, pA) * 1000) / 10;
-  // Disagreement between model and market doesn't drop the pick — it costs 5 confidence points.
   const winnerConf = agree ? rawWinnerConf : Math.max(0, Math.round((rawWinnerConf - 5) * 10) / 10);
   const selection = homeFav ? "Home Win" : "Away Win";
-  // Quality gate: only the predicted winner's seasonal record must clear the bar.
   const winnerRecord = homeFav ? homeAtHome : awayAtAway;
   const winnerRecordOk = winnerRecord.winRate >= winRateFloor && winnerRecord.drawRate <= drawRateCeil;
-  if (winnerConf >= 57 && winnerRecordOk) {
+  if (winnerConf >= matchWinnerFloor && winnerRecordOk) {
     out.push({
       type: "match_winner",
       selection,
       confidence: winnerConf,
-      riskLevel: winnerConf >= 80 ? "low" : winnerConf >= 70 ? "medium" : "high",
+      riskLevel: winnerConf >= 70 ? "low" : winnerConf >= 60 ? "medium" : "high",
       reasons: [
         `Home @ home: ${(homeAtHome.winRate * 100).toFixed(0)}% W / ${(homeAtHome.drawRate * 100).toFixed(0)}% D (${homeAtHome.count} g).`,
         `Away @ away: ${(awayAtAway.winRate * 100).toFixed(0)}% W / ${(awayAtAway.drawRate * 100).toFixed(0)}% D (${awayAtAway.count} g).`,
         marketReason,
-        agree ? "Model and market agree on the favourite." : "⚠️ Model and market disagree on the favourite — confidence penalised by 5 pts.",
+        agree ? "Model and market agree on the favourite." : "⚠️ Model and market disagree — confidence penalised by 5 pts.",
       ],
       stats: { pH, pA, pD, model: { mH, mD, mA }, market, agree },
     });
   }
 
   const dcConf = Math.round((homeFav ? pH + pD : pA + pD) * 1000) / 10;
-  if (dcConf >= 75 && agree) {
+  if (dcConf >= doubleChanceFloor && agree) {
     out.push({
       type: "double_chance",
       selection: homeFav ? "Home or Draw (1X)" : "Draw or Away (X2)",
       confidence: Math.min(95, dcConf),
-      riskLevel: dcConf >= 80 ? "low" : "medium",
+      riskLevel: dcConf >= 78 ? "low" : dcConf >= 70 ? "medium" : "high",
       reasons: [`Combined blended probability ${dcConf.toFixed(1)}%.`, marketReason],
       stats: { pH, pA, pD, market },
     });
