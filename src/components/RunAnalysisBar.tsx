@@ -33,17 +33,18 @@ function todayISO() {
 
 export function RunAnalysisBar() {
   const [date, setDate] = useState(todayISO());
-  const [timeframeHours, setTimeframeHours] = useState(6);
-  const [maxMatches, setMaxMatches] = useState(15);
+  const [timeframeHours, setTimeframeHours] = useState(12);
+  const [maxMatches, setMaxMatches] = useState(50);
   const [minOdds, setMinOdds] = useState(1.15);
   const [maxOdds, setMaxOdds] = useState(5);
   const [trustedOnly, setTrustedOnly] = useState(true);
   const [refresh, setRefresh] = useState(false);
-  const [maxPicks, setMaxPicks] = useState(3);
   const [betType, setBetType] = useState<string>("all");
-  const [winRateFloor, setWinRateFloor] = useState(50); // percent
-  const [drawRateCeil, setDrawRateCeil] = useState(30); // percent
-  const [over15Floor, setOver15Floor] = useState(75);   // percent
+  const [winRateFloor, setWinRateFloor] = useState(45); // percent — team record floor
+  const [drawRateCeil, setDrawRateCeil] = useState(35); // percent — team record ceil
+  const [matchWinnerFloor, setMatchWinnerFloor] = useState(52); // percent — MW confidence floor
+  const [doubleChanceFloor, setDoubleChanceFloor] = useState(65); // percent — DC confidence floor
+  const [over15Floor, setOver15Floor] = useState(60);   // percent — O1.5 confidence floor
   const [apiKey, setApiKey] = useState<1 | 2>(() => {
     if (typeof window === "undefined") return 1;
     const v = window.localStorage.getItem("betedge.apiKey");
