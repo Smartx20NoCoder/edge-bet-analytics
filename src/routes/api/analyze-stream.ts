@@ -35,26 +35,26 @@ export const Route = createFileRoute("/api/analyze-stream")({
       GET: async ({ request }) => {
         const url = new URL(request.url);
         const date = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
-        const timeframeHours = Number(url.searchParams.get("timeframeHours") ?? 6);
-        const maxMatches = Number(url.searchParams.get("maxMatches") ?? 15);
+        const timeframeHours = Number(url.searchParams.get("timeframeHours") ?? 12);
+        const maxMatches = Math.max(1, Math.min(80, Number(url.searchParams.get("maxMatches") ?? 50)));
         const minOdds = Number(url.searchParams.get("minOdds") ?? 1);
-        const maxPicks = Math.max(1, Math.min(10, Number(url.searchParams.get("maxPicks") ?? 3)));
         const trustedOnly = url.searchParams.get("trustedOnly") !== "false";
         const refresh = url.searchParams.get("refresh") === "true";
         const VALID_BET_TYPES = ["all","match_winner","double_chance","asian_handicap","over_1_5_goals","over_6_5_corners","over_7_5_corners"] as const;
         const rawBet = (url.searchParams.get("betType") ?? "all").toLowerCase();
         const betType = (VALID_BET_TYPES as readonly string[]).includes(rawBet) ? rawBet : "all";
-        const cornerTypes = new Set(["over_6_5_corners","over_7_5_corners"]);
-        const matchTypes = new Set(["match_winner","double_chance","asian_handicap","over_1_5_goals"]);
-        const runCorners = betType === "all" || cornerTypes.has(betType);
-                const runMatch = betType === "all" || matchTypes.has(betType);
+        // Always run all engines; the betType is only used as an optional cell filter on the client.
+        const runCorners = true;
+        const runMatch = true;
         const apiKeyParam = url.searchParams.get("apiKey");
         const forcedKey: 1 | 2 | null = apiKeyParam === "1" ? 1 : apiKeyParam === "2" ? 2 : null;
         const maxOdds = Number(url.searchParams.get("maxOdds") ?? 100);
-        const winRateFloor = Math.max(0, Math.min(1, Number(url.searchParams.get("winRateFloor") ?? 0.50)));
-        const drawRateCeil = Math.max(0, Math.min(1, Number(url.searchParams.get("drawRateCeil") ?? 0.30)));
-        const over15Floor = Math.max(0, Math.min(100, Number(url.searchParams.get("over15Floor") ?? 75)));
-        const matchThresholds = { winRateFloor, drawRateCeil, over15Floor };
+        const winRateFloor = Math.max(0, Math.min(1, Number(url.searchParams.get("winRateFloor") ?? 0.45)));
+        const drawRateCeil = Math.max(0, Math.min(1, Number(url.searchParams.get("drawRateCeil") ?? 0.35)));
+        const over15Floor = Math.max(0, Math.min(100, Number(url.searchParams.get("over15Floor") ?? 60)));
+        const matchWinnerFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("matchWinnerFloor") ?? 52)));
+        const doubleChanceFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("doubleChanceFloor") ?? 65)));
+        const matchThresholds = { winRateFloor, drawRateCeil, over15Floor, matchWinnerFloor, doubleChanceFloor };
 
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
@@ -178,22 +178,22 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     confidence: p.confidence, risk_level: p.riskLevel, reasons: p.reasons,
                     stats: p.stats, recommendation: `Lean ${p.selection} (${p.confidence}% model confidence).`,
                   });
-                  // Restrict to selected bet type if a specific one was chosen.
-                  const filtered = betType === "all" ? collected : collected.filter((x) => x.prediction_type === betType);
-                  filtered.sort((a, b) => Number(b.confidence) - Number(a.confidence));
-                  const best = filtered[0];
-                  if (best) {
+                  // Keep ALL qualifying picks across all 4 engines for this match.
+                  // betType is no longer used to restrict storage — clients filter per-cell in the table.
+                  let kept = 0;
+                  for (const x of collected) {
                     predictions.push({
-                      ...best, match_id: m.matchId,
+                      ...x, match_id: m.matchId,
                       home_team: m.homeName, away_team: m.awayName,
                       league_id: m.leagueId, league_name: m.leagueName,
                       kickoff: new Date(m.matchTime * 1000).toISOString(),
                     });
+                    kept++;
                   }
                   send("match_done", {
                     index: i + 1, total: candidates.length,
                     home: m.homeName, away: m.awayName,
-                    picks: best ? 1 : 0,
+                    picks: kept,
                   });
                 } catch (e: any) {
                   send("match_error", {
@@ -211,20 +211,20 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   const implied = 100 / Number(p.confidence);
                   return implied >= minOdds && implied <= maxOdds;
                 })
-                .sort((a, b) => Number(b.confidence) - Number(a.confidence))
-                .slice(0, maxPicks);
+                .sort((a, b) => Number(b.confidence) - Number(a.confidence));
 
-              // Bookmaker availability check — annotate, don't drop.
-              let noOddsCount = 0;
-              const finalPreds: any[] = [];
-              for (const p of passedThreshold) {
-                const ok = await hasMainOdds(String(p.match_id));
-                if (!ok) noOddsCount++;
-                finalPreds.push({
-                  ...p,
-                  stats: { ...(p.stats ?? {}), oddsAvailable: ok },
-                });
+              // Bookmaker availability check — one call per unique match, cached + annotated.
+              const oddsByMatch = new Map<string, boolean>();
+              const uniqueMatchIds = Array.from(new Set(passedThreshold.map((p) => String(p.match_id))));
+              for (const mid of uniqueMatchIds) {
+                oddsByMatch.set(mid, await hasMainOdds(mid));
               }
+              let noOddsCount = 0;
+              const finalPreds: any[] = passedThreshold.map((p) => {
+                const ok = oddsByMatch.get(String(p.match_id)) ?? true;
+                if (!ok) noOddsCount++;
+                return { ...p, stats: { ...(p.stats ?? {}), oddsAvailable: ok } };
+              });
               if (noOddsCount) {
                 send("status", { message: `Flagged ${noOddsCount} pick(s) with no 1X2 bookmaker odds — verify manually.` });
               }
@@ -253,7 +253,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   predictions_generated: finalPreds.length,
                   avg_confidence: Math.round(avg * 100) / 100,
                   status: "completed",
-                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount, winRateFloor, drawRateCeil, over15Floor }),
+                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount, winRateFloor, drawRateCeil, over15Floor, matchWinnerFloor, doubleChanceFloor }),
                 })
                 .select()
                 .single();

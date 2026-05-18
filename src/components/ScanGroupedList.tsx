@@ -3,9 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { getAnalyses, getPredictions } from "@/lib/predictions.functions";
-import { PredictionCard, type Prediction } from "./PredictionCard";
+import type { Prediction } from "./PredictionCard";
+import { PredictionCard } from "./PredictionCard";
 import { ScanScorecard } from "./ScanScorecard";
 import { LeagueScopeBadge } from "./LeagueScopeBadge";
+import { ScanTable } from "./ScanTable";
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function formatScanLabel(iso: string): string {
@@ -22,16 +24,18 @@ export function ScanGroupedList({
   engine,
   typeFilter,
   accent = "neon",
+  view = "table",
 }: {
   engine: "corners" | "match";
   typeFilter: string;
   accent?: "neon" | "gold";
+  view?: "table" | "cards";
 }) {
   const fa = useServerFn(getAnalyses);
   const fp = useServerFn(getPredictions);
   const aQ = useQuery({
-    queryKey: ["analyses", "engine", engine],
-    queryFn: () => fa({ data: { engine } }),
+    queryKey: ["analyses", view === "table" ? "all" : engine],
+    queryFn: () => fa({ data: view === "table" ? {} : { engine } }),
   });
   const [openId, setOpenId] = useState<string | null>(null);
   const list = aQ.data?.analyses ?? [];
@@ -52,20 +56,23 @@ export function ScanGroupedList({
           engine={engine}
           typeFilter={typeFilter}
           accent={accent}
+          view={view}
         />
       ))}
     </div>
   );
 }
 
-function ScanItem({ a, open, onToggle, fp, engine, typeFilter, accent }: any) {
+function ScanItem({ a, open, onToggle, fp, engine, typeFilter, accent, view }: any) {
   const q = useQuery({
-    queryKey: ["preds", "analysis", a.id, engine],
-    queryFn: () => fp({ data: { analysisId: a.id, engine } }),
+    queryKey: ["preds", "analysis", a.id, view === "table" ? "all" : engine],
+    queryFn: () => fp({ data: view === "table" ? { analysisId: a.id } : { analysisId: a.id, engine } }),
     enabled: open,
   });
   const allPreds = (q.data?.predictions ?? []) as Prediction[];
-  const preds = typeFilter === "all" ? allPreds : allPreds.filter((p) => p.prediction_type === typeFilter);
+  const preds = typeFilter === "all" || view === "table"
+    ? allPreds
+    : allPreds.filter((p) => p.prediction_type === typeFilter);
   const accentClass = accent === "gold" ? "text-gold" : "text-neon";
   return (
     <div className="glass rounded-xl">
@@ -89,6 +96,8 @@ function ScanItem({ a, open, onToggle, fp, engine, typeFilter, accent }: any) {
             <p className="text-sm text-muted-foreground">Loading picks…</p>
           ) : preds.length === 0 ? (
             <p className="text-sm text-muted-foreground">No picks for this filter.</p>
+          ) : view === "table" ? (
+            <ScanTable predictions={preds} />
           ) : (
             <div className="grid md:grid-cols-2 gap-4">
               {preds.map((p) => <PredictionCard key={p.id} p={p} />)}
