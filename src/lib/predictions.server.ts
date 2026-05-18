@@ -103,20 +103,20 @@ export function predictCorners(analysis: AnyObj, homeId?: string, awayId?: strin
     let confidence = 50 + margin * 9;
     if (dataPoints < 8) confidence -= 8;
     confidence = Math.max(0, Math.min(line === 6.5 ? 96 : 94, confidence));
-    if (confidence >= 75 && projected >= projMin) {
+    if (confidence >= 70 && projected >= projMin) {
       out.push({
         type: line === 6.5 ? "over_6_5_corners" : "over_7_5_corners",
         selection: `Over ${line} Corners`,
         projectedCorners: Math.round(projected * 100) / 100,
         confidence: Math.round(confidence * 10) / 10,
-        riskLevel: confidence >= 85 ? "low" : confidence >= 75 ? "medium" : "high",
+        riskLevel: confidence >= 82 ? "low" : confidence >= 72 ? "medium" : "high",
         reasons,
         stats: { home: h, away: a, projected },
       });
     }
   };
-  make(6.5, 7.5);
-  make(7.5, 8.5);
+  make(6.5, 7.0);
+  make(7.5, 8.0);
   return out;
 }
 
