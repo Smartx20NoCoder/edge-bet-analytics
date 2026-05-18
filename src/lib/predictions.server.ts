@@ -373,13 +373,14 @@ export function gradePrediction(
 }
 
 // Confidence thresholds enforced before saving any prediction.
+// Lowered to surface 30-50 investable picks per scan; sliders can override.
 export const CONFIDENCE_THRESHOLDS: Record<string, number> = {
-  match_winner: 57,
-  double_chance: 75,
-  asian_handicap: 75,
-  over_1_5_goals: 75,
-  over_6_5_corners: 75,
-  over_7_5_corners: 75,
+  match_winner: 52,
+  double_chance: 65,
+  asian_handicap: 70,
+  over_1_5_goals: 60,
+  over_6_5_corners: 70,
+  over_7_5_corners: 70,
 };
 
 export function meetsConfidenceThreshold(type: string, confidence: number): boolean {
