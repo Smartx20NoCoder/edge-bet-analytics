@@ -213,17 +213,18 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 })
                 .sort((a, b) => Number(b.confidence) - Number(a.confidence));
 
-              // Bookmaker availability check — annotate, don't drop.
-              let noOddsCount = 0;
-              const finalPreds: any[] = [];
-              for (const p of passedThreshold) {
-                const ok = await hasMainOdds(String(p.match_id));
-                if (!ok) noOddsCount++;
-                finalPreds.push({
-                  ...p,
-                  stats: { ...(p.stats ?? {}), oddsAvailable: ok },
-                });
+              // Bookmaker availability check — one call per unique match, cached + annotated.
+              const oddsByMatch = new Map<string, boolean>();
+              const uniqueMatchIds = Array.from(new Set(passedThreshold.map((p) => String(p.match_id))));
+              for (const mid of uniqueMatchIds) {
+                oddsByMatch.set(mid, await hasMainOdds(mid));
               }
+              let noOddsCount = 0;
+              const finalPreds: any[] = passedThreshold.map((p) => {
+                const ok = oddsByMatch.get(String(p.match_id)) ?? true;
+                if (!ok) noOddsCount++;
+                return { ...p, stats: { ...(p.stats ?? {}), oddsAvailable: ok } };
+              });
               if (noOddsCount) {
                 send("status", { message: `Flagged ${noOddsCount} pick(s) with no 1X2 bookmaker odds — verify manually.` });
               }
