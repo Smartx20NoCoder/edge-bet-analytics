@@ -98,10 +98,12 @@ export function RunAnalysisBar() {
       date, timeframeHours: String(timeframeHours), maxMatches: String(maxMatches),
       minOdds: String(minOdds), maxOdds: String(maxOdds),
       trustedOnly: String(trustedOnly), refresh: String(refresh),
-      maxPicks: String(maxPicks), betType, apiKey: String(apiKey),
+      betType, apiKey: String(apiKey),
       winRateFloor: String(winRateFloor / 100),
       drawRateCeil: String(drawRateCeil / 100),
       over15Floor: String(over15Floor),
+      matchWinnerFloor: String(matchWinnerFloor),
+      doubleChanceFloor: String(doubleChanceFloor),
     });
     const ctrl = new AbortController();
     abortRef.current = ctrl;
