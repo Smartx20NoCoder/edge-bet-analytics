@@ -16,6 +16,7 @@ export type Prediction = {
   risk_level: string;
   reasons: string[] | any;
   recommendation: string | null;
+  match_id?: string | null;
   home_score?: number | null;
   away_score?: number | null;
   total_corners?: number | null;
