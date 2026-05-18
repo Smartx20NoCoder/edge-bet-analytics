@@ -232,9 +232,9 @@ export function RunAnalysisBar() {
             id="scan-max-matches"
             type="number"
             min={1}
-            max={40}
+            max={80}
             value={maxMatches}
-            onChange={(e) => setMaxMatches(Math.max(1, Math.min(40, Number(e.target.value) || 1)))}
+            onChange={(e) => setMaxMatches(Math.max(1, Math.min(80, Number(e.target.value) || 1)))}
             className="h-9 w-full rounded-md bg-secondary border border-border px-3 text-sm font-mono"
           />
         </Field>
@@ -254,22 +254,26 @@ export function RunAnalysisBar() {
           />
         </Field>
       </div>
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Field label={`Max Picks: ${maxPicks}`} Icon={Target}>
-          <Slider min={1} max={5} step={1} value={[maxPicks]}
-            onValueChange={(v) => setMaxPicks(v[0] ?? 3)} className="mt-2" />
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <Field label={`Match Winner Floor: ${matchWinnerFloor}%`} Icon={Target}>
+          <Slider min={45} max={75} step={1} value={[matchWinnerFloor]}
+            onValueChange={(v) => setMatchWinnerFloor(v[0] ?? 52)} className="mt-2" />
         </Field>
-        <Field label={`MW Win Rate Floor: ${winRateFloor}%`} Icon={Target}>
-          <Slider min={40} max={70} step={1} value={[winRateFloor]}
-            onValueChange={(v) => setWinRateFloor(v[0] ?? 50)} className="mt-2" />
+        <Field label={`Double Chance Floor: ${doubleChanceFloor}%`} Icon={Target}>
+          <Slider min={55} max={90} step={1} value={[doubleChanceFloor]}
+            onValueChange={(v) => setDoubleChanceFloor(v[0] ?? 65)} className="mt-2" />
         </Field>
-        <Field label={`MW Draw Rate Ceiling: ${drawRateCeil}%`} Icon={Target}>
-          <Slider min={10} max={50} step={1} value={[drawRateCeil]}
-            onValueChange={(v) => setDrawRateCeil(v[0] ?? 30)} className="mt-2" />
-        </Field>
-        <Field label={`Over 1.5 Confidence Floor: ${over15Floor}%`} Icon={Target}>
+        <Field label={`Over 1.5 Floor: ${over15Floor}%`} Icon={Target}>
           <Slider min={50} max={95} step={1} value={[over15Floor]}
-            onValueChange={(v) => setOver15Floor(v[0] ?? 75)} className="mt-2" />
+            onValueChange={(v) => setOver15Floor(v[0] ?? 60)} className="mt-2" />
+        </Field>
+        <Field label={`Team Win Rate Floor: ${winRateFloor}%`} Icon={Target}>
+          <Slider min={35} max={70} step={1} value={[winRateFloor]}
+            onValueChange={(v) => setWinRateFloor(v[0] ?? 45)} className="mt-2" />
+        </Field>
+        <Field label={`Team Draw Rate Ceiling: ${drawRateCeil}%`} Icon={Target}>
+          <Slider min={15} max={50} step={1} value={[drawRateCeil]}
+            onValueChange={(v) => setDrawRateCeil(v[0] ?? 35)} className="mt-2" />
         </Field>
       </div>
       <div className="flex flex-wrap items-center gap-3">
