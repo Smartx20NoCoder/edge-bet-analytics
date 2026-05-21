@@ -361,6 +361,7 @@ export function gradePrediction(
   const cornersOk = r.homeCorners != null && r.awayCorners != null;
   if (predictionType === "over_6_5_corners") return cornersOk ? corners > 6.5 : null;
   if (predictionType === "over_7_5_corners") return cornersOk ? corners > 7.5 : null;
+  if (predictionType === "over_8_5_corners") return cornersOk ? corners > 8.5 : null;
   if (hs == null || as == null) return null;
   if (predictionType === "over_1_5_goals") return hs + as > 1.5;
   if (predictionType === "over_2_5_goals") return hs + as > 2.5;
@@ -387,8 +388,9 @@ export const CONFIDENCE_THRESHOLDS: Record<string, number> = {
   double_chance: 65,
   asian_handicap: 70,
   over_1_5_goals: 60,
-  over_6_5_corners: 70,
-  over_7_5_corners: 70,
+  over_6_5_corners: 65,
+  over_7_5_corners: 68,
+  over_8_5_corners: 72,
 };
 
 export function meetsConfidenceThreshold(type: string, confidence: number): boolean {
