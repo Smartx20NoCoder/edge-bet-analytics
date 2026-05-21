@@ -207,8 +207,16 @@ export const Route = createFileRoute("/api/analyze-stream")({
               }
 
               send("status", { message: "Generating final predictions…" });
+              const isCorner = (t: string) => t === "over_6_5_corners" || t === "over_7_5_corners" || t === "over_8_5_corners";
               const passedThreshold = predictions
-                .filter((p) => p.prediction_type === "over_1_5_goals" ? Number(p.confidence) >= over15Floor : meetsConfidenceThreshold(p.prediction_type, Number(p.confidence)))
+                .filter((p) => {
+                  const c = Number(p.confidence);
+                  if (p.prediction_type === "over_1_5_goals") return c >= over15Floor;
+                  if (p.prediction_type === "match_winner") return c >= matchWinnerFloor;
+                  if (p.prediction_type === "double_chance") return c >= doubleChanceFloor;
+                  if (isCorner(p.prediction_type)) return c >= cornersFloor;
+                  return meetsConfidenceThreshold(p.prediction_type, c);
+                })
                 .filter((p) => {
                   const implied = 100 / Number(p.confidence);
                   return implied >= minOdds && implied <= maxOdds;
