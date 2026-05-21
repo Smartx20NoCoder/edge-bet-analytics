@@ -113,6 +113,7 @@ export function RunAnalysisBar() {
       over15Floor: String(over15Floor),
       matchWinnerFloor: String(matchWinnerFloor),
       doubleChanceFloor: String(doubleChanceFloor),
+      cornersFloor: String(cornersFloor),
     });
     const ctrl = new AbortController();
     abortRef.current = ctrl;
