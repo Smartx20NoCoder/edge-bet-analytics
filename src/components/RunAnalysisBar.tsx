@@ -21,8 +21,8 @@ const BET_TYPES = [
   { id: "double_chance", label: "Double Chance" },
   { id: "asian_handicap", label: "Asian Handicap" },
   { id: "over_1_5_goals", label: "Over 1.5 Goals" },
-  { id: "over_6_5_corners", label: "Over 6.5 Corners" },
   { id: "over_7_5_corners", label: "Over 7.5 Corners" },
+  { id: "over_8_5_corners", label: "Over 8.5 Corners" },
 ] as const;
 
 type LogEntry = { kind: "status" | "match" | "match_done" | "match_error" | "done" | "error"; text: string; at: number };
