@@ -249,42 +249,44 @@ export function RunAnalysisBar() {
           />
         </Field>
         <Field label={`Odds Range: ${minOdds.toFixed(2)} – ${maxOdds.toFixed(2)}`} Icon={TrendingUp}>
-          <Slider
-            min={1}
-            max={10}
-            step={0.05}
+          <RangeWithBounds
             value={[minOdds, maxOdds]}
-            onValueChange={(v) => {
-              const [lo, hi] = v;
-              setMinOdds(Math.min(lo ?? 1, hi ?? 10));
-              setMaxOdds(Math.max(lo ?? 1, hi ?? 10));
+            bounds={oddsBounds}
+            step={0.05}
+            min={1}
+            max={20}
+            decimals={2}
+            onValueChange={([lo, hi]) => {
+              setMinOdds(Math.min(lo, hi));
+              setMaxOdds(Math.max(lo, hi));
             }}
-            aria-label="Odds range"
-            className="mt-2"
+            onBoundsChange={(b) => {
+              setOddsBounds(b);
+              setMinOdds((v) => Math.min(Math.max(v, b[0]), b[1]));
+              setMaxOdds((v) => Math.min(Math.max(v, b[0]), b[1]));
+            }}
           />
         </Field>
       </div>
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <Field label={`Match Winner Floor: ${matchWinnerFloor}%`} Icon={Target}>
-          <Slider min={45} max={75} step={1} value={[matchWinnerFloor]}
-            onValueChange={(v) => setMatchWinnerFloor(v[0] ?? 52)} className="mt-2" />
-        </Field>
-        <Field label={`Double Chance Floor: ${doubleChanceFloor}%`} Icon={Target}>
-          <Slider min={55} max={90} step={1} value={[doubleChanceFloor]}
-            onValueChange={(v) => setDoubleChanceFloor(v[0] ?? 65)} className="mt-2" />
-        </Field>
-        <Field label={`Over 1.5 Floor: ${over15Floor}%`} Icon={Target}>
-          <Slider min={50} max={95} step={1} value={[over15Floor]}
-            onValueChange={(v) => setOver15Floor(v[0] ?? 60)} className="mt-2" />
-        </Field>
-        <Field label={`Team Win Rate Floor: ${winRateFloor}%`} Icon={Target}>
-          <Slider min={35} max={70} step={1} value={[winRateFloor]}
-            onValueChange={(v) => setWinRateFloor(v[0] ?? 45)} className="mt-2" />
-        </Field>
-        <Field label={`Team Draw Rate Ceiling: ${drawRateCeil}%`} Icon={Target}>
-          <Slider min={15} max={50} step={1} value={[drawRateCeil]}
-            onValueChange={(v) => setDrawRateCeil(v[0] ?? 35)} className="mt-2" />
-        </Field>
+        <ThresholdField label={`Match Winner Floor: ${matchWinnerFloor}%`}
+          value={matchWinnerFloor} bounds={matchWinnerBounds}
+          onValueChange={setMatchWinnerFloor} onBoundsChange={setMatchWinnerBounds} />
+        <ThresholdField label={`Double Chance Floor: ${doubleChanceFloor}%`}
+          value={doubleChanceFloor} bounds={doubleChanceBounds}
+          onValueChange={setDoubleChanceFloor} onBoundsChange={setDoubleChanceBounds} />
+        <ThresholdField label={`Over 1.5 Floor: ${over15Floor}%`}
+          value={over15Floor} bounds={over15Bounds}
+          onValueChange={setOver15Floor} onBoundsChange={setOver15Bounds} />
+        <ThresholdField label={`Corners Floor (7.5 & 8.5): ${cornersFloor}%`}
+          value={cornersFloor} bounds={cornersBounds}
+          onValueChange={setCornersFloor} onBoundsChange={setCornersBounds} />
+        <ThresholdField label={`Team Win Rate Floor: ${winRateFloor}%`}
+          value={winRateFloor} bounds={winRateBounds}
+          onValueChange={setWinRateFloor} onBoundsChange={setWinRateBounds} />
+        <ThresholdField label={`Team Draw Rate Ceiling: ${drawRateCeil}%`}
+          value={drawRateCeil} bounds={drawRateBounds}
+          onValueChange={setDrawRateCeil} onBoundsChange={setDrawRateBounds} />
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
