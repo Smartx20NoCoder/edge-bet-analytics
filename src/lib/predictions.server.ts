@@ -43,7 +43,7 @@ function root(analysis: AnyObj): AnyObj {
 // ---------------- Corners ----------------
 
 export type CornerPrediction = {
-  type: "over_6_5_corners" | "over_7_5_corners";
+  type: "over_6_5_corners" | "over_7_5_corners" | "over_8_5_corners";
   selection: string;
   projectedCorners: number;
   confidence: number;
@@ -79,14 +79,21 @@ function teamCornerAverages(rows: Row[], teamId: string | undefined) {
   return { games: pooled, cFor: mid, cAg: mid };
 }
 
-export function predictCorners(analysis: AnyObj, homeId?: string, awayId?: string): CornerPrediction[] {
+export type CornerThresholds = { cornersFloor?: number /* 0..100, default 70 */ };
+
+export function predictCorners(
+  analysis: AnyObj,
+  homeId?: string,
+  awayId?: string,
+  thresholds: CornerThresholds = {},
+): CornerPrediction[] {
+  const cornersFloor = thresholds.cornersFloor ?? 70;
   const d = root(analysis);
   const homeRows = parseRows(d.homeLastMatches);
   const awayRows = parseRows(d.awayLastMatches);
   const h = teamCornerAverages(homeRows, homeId);
   const a = teamCornerAverages(awayRows, awayId);
   if (!h || !a) return [];
-  // Require at least 6 games of seasonal data per side before firing.
   if (h.games < 6 || a.games < 6) return [];
 
   const projected = (h.cFor + a.cAg + a.cFor + h.cAg) / 2;
@@ -98,25 +105,26 @@ export function predictCorners(analysis: AnyObj, homeId?: string, awayId?: strin
   const dataPoints = h.games + a.games;
 
   const out: CornerPrediction[] = [];
-  const make = (line: 6.5 | 7.5, projMin: number) => {
+  const make = (line: 7.5 | 8.5, projMin: number, type: CornerPrediction["type"], cap: number) => {
     const margin = projected - line;
     let confidence = 50 + margin * 9;
     if (dataPoints < 8) confidence -= 8;
-    confidence = Math.max(0, Math.min(line === 6.5 ? 96 : 94, confidence));
-    if (confidence >= 70 && projected >= projMin) {
+    confidence = Math.max(0, Math.min(cap, confidence));
+    if (confidence >= cornersFloor && projected >= projMin) {
       out.push({
-        type: line === 6.5 ? "over_6_5_corners" : "over_7_5_corners",
+        type,
         selection: `Over ${line} Corners`,
         projectedCorners: Math.round(projected * 100) / 100,
         confidence: Math.round(confidence * 10) / 10,
         riskLevel: confidence >= 82 ? "low" : confidence >= 72 ? "medium" : "high",
         reasons,
-        stats: { home: h, away: a, projected },
+        stats: { home: h, away: a, projected, line },
       });
     }
   };
-  make(6.5, 7.0);
-  make(7.5, 8.0);
+  // Run both engines independently — each can qualify on its own.
+  make(7.5, 8.0, "over_7_5_corners", 94);
+  make(8.5, 9.0, "over_8_5_corners", 92);
   return out;
 }
 
