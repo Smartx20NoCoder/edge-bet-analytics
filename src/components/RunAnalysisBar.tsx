@@ -21,8 +21,8 @@ const BET_TYPES = [
   { id: "double_chance", label: "Double Chance" },
   { id: "asian_handicap", label: "Asian Handicap" },
   { id: "over_1_5_goals", label: "Over 1.5 Goals" },
-  { id: "over_6_5_corners", label: "Over 6.5 Corners" },
   { id: "over_7_5_corners", label: "Over 7.5 Corners" },
+  { id: "over_8_5_corners", label: "Over 8.5 Corners" },
 ] as const;
 
 type LogEntry = { kind: "status" | "match" | "match_done" | "match_error" | "done" | "error"; text: string; at: number };
@@ -37,14 +37,23 @@ export function RunAnalysisBar() {
   const [maxMatches, setMaxMatches] = useState(50);
   const [minOdds, setMinOdds] = useState(1.15);
   const [maxOdds, setMaxOdds] = useState(5);
+  const [oddsBounds, setOddsBounds] = useState<[number, number]>([1, 10]);
   const [trustedOnly, setTrustedOnly] = useState(true);
   const [refresh, setRefresh] = useState(false);
   const [betType, setBetType] = useState<string>("all");
-  const [winRateFloor, setWinRateFloor] = useState(45); // percent — team record floor
-  const [drawRateCeil, setDrawRateCeil] = useState(35); // percent — team record ceil
-  const [matchWinnerFloor, setMatchWinnerFloor] = useState(52); // percent — MW confidence floor
-  const [doubleChanceFloor, setDoubleChanceFloor] = useState(65); // percent — DC confidence floor
-  const [over15Floor, setOver15Floor] = useState(60);   // percent — O1.5 confidence floor
+  // Threshold values + adjustable slider bounds for each.
+  const [winRateFloor, setWinRateFloor] = useState(45);
+  const [winRateBounds, setWinRateBounds] = useState<[number, number]>([35, 70]);
+  const [drawRateCeil, setDrawRateCeil] = useState(35);
+  const [drawRateBounds, setDrawRateBounds] = useState<[number, number]>([15, 50]);
+  const [matchWinnerFloor, setMatchWinnerFloor] = useState(52);
+  const [matchWinnerBounds, setMatchWinnerBounds] = useState<[number, number]>([45, 75]);
+  const [doubleChanceFloor, setDoubleChanceFloor] = useState(65);
+  const [doubleChanceBounds, setDoubleChanceBounds] = useState<[number, number]>([55, 90]);
+  const [over15Floor, setOver15Floor] = useState(60);
+  const [over15Bounds, setOver15Bounds] = useState<[number, number]>([50, 95]);
+  const [cornersFloor, setCornersFloor] = useState(70);
+  const [cornersBounds, setCornersBounds] = useState<[number, number]>([55, 95]);
   const [apiKey, setApiKey] = useState<1 | 2>(() => {
     if (typeof window === "undefined") return 1;
     const v = window.localStorage.getItem("betedge.apiKey");
@@ -104,6 +113,7 @@ export function RunAnalysisBar() {
       over15Floor: String(over15Floor),
       matchWinnerFloor: String(matchWinnerFloor),
       doubleChanceFloor: String(doubleChanceFloor),
+      cornersFloor: String(cornersFloor),
     });
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -239,42 +249,44 @@ export function RunAnalysisBar() {
           />
         </Field>
         <Field label={`Odds Range: ${minOdds.toFixed(2)} – ${maxOdds.toFixed(2)}`} Icon={TrendingUp}>
-          <Slider
-            min={1}
-            max={10}
-            step={0.05}
+          <RangeWithBounds
             value={[minOdds, maxOdds]}
-            onValueChange={(v) => {
-              const [lo, hi] = v;
-              setMinOdds(Math.min(lo ?? 1, hi ?? 10));
-              setMaxOdds(Math.max(lo ?? 1, hi ?? 10));
+            bounds={oddsBounds}
+            step={0.05}
+            min={1}
+            max={20}
+            decimals={2}
+            onValueChange={([lo, hi]) => {
+              setMinOdds(Math.min(lo, hi));
+              setMaxOdds(Math.max(lo, hi));
             }}
-            aria-label="Odds range"
-            className="mt-2"
+            onBoundsChange={(b) => {
+              setOddsBounds(b);
+              setMinOdds((v) => Math.min(Math.max(v, b[0]), b[1]));
+              setMaxOdds((v) => Math.min(Math.max(v, b[0]), b[1]));
+            }}
           />
         </Field>
       </div>
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <Field label={`Match Winner Floor: ${matchWinnerFloor}%`} Icon={Target}>
-          <Slider min={45} max={75} step={1} value={[matchWinnerFloor]}
-            onValueChange={(v) => setMatchWinnerFloor(v[0] ?? 52)} className="mt-2" />
-        </Field>
-        <Field label={`Double Chance Floor: ${doubleChanceFloor}%`} Icon={Target}>
-          <Slider min={55} max={90} step={1} value={[doubleChanceFloor]}
-            onValueChange={(v) => setDoubleChanceFloor(v[0] ?? 65)} className="mt-2" />
-        </Field>
-        <Field label={`Over 1.5 Floor: ${over15Floor}%`} Icon={Target}>
-          <Slider min={50} max={95} step={1} value={[over15Floor]}
-            onValueChange={(v) => setOver15Floor(v[0] ?? 60)} className="mt-2" />
-        </Field>
-        <Field label={`Team Win Rate Floor: ${winRateFloor}%`} Icon={Target}>
-          <Slider min={35} max={70} step={1} value={[winRateFloor]}
-            onValueChange={(v) => setWinRateFloor(v[0] ?? 45)} className="mt-2" />
-        </Field>
-        <Field label={`Team Draw Rate Ceiling: ${drawRateCeil}%`} Icon={Target}>
-          <Slider min={15} max={50} step={1} value={[drawRateCeil]}
-            onValueChange={(v) => setDrawRateCeil(v[0] ?? 35)} className="mt-2" />
-        </Field>
+        <ThresholdField label={`Match Winner Floor: ${matchWinnerFloor}%`}
+          value={matchWinnerFloor} bounds={matchWinnerBounds}
+          onValueChange={setMatchWinnerFloor} onBoundsChange={setMatchWinnerBounds} />
+        <ThresholdField label={`Double Chance Floor: ${doubleChanceFloor}%`}
+          value={doubleChanceFloor} bounds={doubleChanceBounds}
+          onValueChange={setDoubleChanceFloor} onBoundsChange={setDoubleChanceBounds} />
+        <ThresholdField label={`Over 1.5 Floor: ${over15Floor}%`}
+          value={over15Floor} bounds={over15Bounds}
+          onValueChange={setOver15Floor} onBoundsChange={setOver15Bounds} />
+        <ThresholdField label={`Corners Floor (7.5 & 8.5): ${cornersFloor}%`}
+          value={cornersFloor} bounds={cornersBounds}
+          onValueChange={setCornersFloor} onBoundsChange={setCornersBounds} />
+        <ThresholdField label={`Team Win Rate Floor: ${winRateFloor}%`}
+          value={winRateFloor} bounds={winRateBounds}
+          onValueChange={setWinRateFloor} onBoundsChange={setWinRateBounds} />
+        <ThresholdField label={`Team Draw Rate Ceiling: ${drawRateCeil}%`}
+          value={drawRateCeil} bounds={drawRateBounds}
+          onValueChange={setDrawRateCeil} onBoundsChange={setDrawRateBounds} />
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -393,6 +405,110 @@ function Field({ label, Icon, children, htmlFor }: { label: string; Icon: any; c
         <Icon className="h-3 w-3" /> {label}
       </label>
       {children}
+    </div>
+  );
+}
+
+// Single-value threshold slider with editable lower/upper bound inputs.
+function ThresholdField({
+  label, value, bounds, onValueChange, onBoundsChange, step = 1,
+}: {
+  label: string;
+  value: number;
+  bounds: [number, number];
+  onValueChange: (v: number) => void;
+  onBoundsChange: (b: [number, number]) => void;
+  step?: number;
+}) {
+  const [lo, hi] = bounds;
+  const clamped = Math.min(Math.max(value, lo), hi);
+  return (
+    <div>
+      <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">
+        <Target className="h-3 w-3" /> {label}
+      </label>
+      <Slider min={lo} max={hi} step={step} value={[clamped]}
+        onValueChange={(v) => onValueChange(v[0] ?? clamped)} className="mt-2" />
+      <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
+        <span className="uppercase tracking-wider">Range</span>
+        <input
+          type="number" value={lo} step={step} min={0} max={hi - step}
+          onChange={(e) => {
+            const next = Math.min(Number(e.target.value) || 0, hi - step);
+            onBoundsChange([next, hi]);
+            if (value < next) onValueChange(next);
+          }}
+          className="h-7 w-16 rounded-md bg-secondary border border-border px-2 text-xs font-mono text-foreground"
+          aria-label="Slider lower bound"
+        />
+        <span>–</span>
+        <input
+          type="number" value={hi} step={step} min={lo + step} max={100}
+          onChange={(e) => {
+            const next = Math.max(Number(e.target.value) || 0, lo + step);
+            onBoundsChange([lo, next]);
+            if (value > next) onValueChange(next);
+          }}
+          className="h-7 w-16 rounded-md bg-secondary border border-border px-2 text-xs font-mono text-foreground"
+          aria-label="Slider upper bound"
+        />
+      </div>
+    </div>
+  );
+}
+
+// Dual-thumb range slider (e.g. odds) with editable lower/upper bound inputs.
+function RangeWithBounds({
+  value, bounds, onValueChange, onBoundsChange, step = 1, min = 0, max = 100, decimals = 0,
+}: {
+  value: [number, number];
+  bounds: [number, number];
+  onValueChange: (v: [number, number]) => void;
+  onBoundsChange: (b: [number, number]) => void;
+  step?: number;
+  min?: number;
+  max?: number;
+  decimals?: number;
+}) {
+  const [blo, bhi] = bounds;
+  const [vlo, vhi] = value;
+  const cLo = Math.min(Math.max(vlo, blo), bhi);
+  const cHi = Math.min(Math.max(vhi, blo), bhi);
+  const fmt = (n: number) => n.toFixed(decimals);
+  return (
+    <div>
+      <Slider
+        min={blo} max={bhi} step={step}
+        value={[cLo, cHi]}
+        onValueChange={(v) => {
+          const [lo, hi] = v;
+          onValueChange([Math.min(lo, hi), Math.max(lo, hi)]);
+        }}
+        aria-label="Range slider"
+        className="mt-2"
+      />
+      <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
+        <span className="uppercase tracking-wider">Range</span>
+        <input
+          type="number" value={fmt(blo)} step={step} min={min} max={bhi - step}
+          onChange={(e) => {
+            const next = Math.min(Number(e.target.value) || min, bhi - step);
+            onBoundsChange([next, bhi]);
+          }}
+          className="h-7 w-16 rounded-md bg-secondary border border-border px-2 text-xs font-mono text-foreground"
+          aria-label="Slider lower bound"
+        />
+        <span>–</span>
+        <input
+          type="number" value={fmt(bhi)} step={step} min={blo + step} max={max}
+          onChange={(e) => {
+            const next = Math.max(Number(e.target.value) || max, blo + step);
+            onBoundsChange([blo, next]);
+          }}
+          className="h-7 w-16 rounded-md bg-secondary border border-border px-2 text-xs font-mono text-foreground"
+          aria-label="Slider upper bound"
+        />
+      </div>
     </div>
   );
 }

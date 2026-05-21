@@ -14,7 +14,8 @@ const COLUMNS: Col[] = [
   { key: "match_winner", label: "Match Winner", types: ["match_winner"] },
   { key: "over_1_5_goals", label: "Over 1.5", types: ["over_1_5_goals"] },
   { key: "double_chance", label: "Double Chance", types: ["double_chance"] },
-  { key: "corners", label: "Corners 7.5/8.5", types: ["over_6_5_corners", "over_7_5_corners"] },
+  { key: "over_7_5_corners", label: "Over 7.5 Corners", types: ["over_7_5_corners", "over_6_5_corners"] },
+  { key: "over_8_5_corners", label: "Over 8.5 Corners", types: ["over_8_5_corners"] },
 ];
 
 type MatchRow = {
@@ -169,6 +170,7 @@ export function ScanTable({ predictions }: { predictions: Prediction[] }) {
                       const label =
                         cell.prediction_type === "over_6_5_corners" ? "O6.5" :
                         cell.prediction_type === "over_7_5_corners" ? "O7.5" :
+                        cell.prediction_type === "over_8_5_corners" ? "O8.5" :
                         cell.selection;
                       return (
                         <td key={c.key} className="px-3 py-3 text-center" title={`${cell.selection} · implied odds ${implied}`}>

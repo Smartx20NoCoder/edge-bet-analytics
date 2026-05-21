@@ -49,10 +49,10 @@ const RunInput = z.object({
   minOdds: z.number().min(1).max(10).optional(), // implied-odds floor (1/p)
   trustedOnly: z.boolean().optional(),
   refresh: z.boolean().optional(), // force re-fetch of analysis cache
-  betType: z.enum(["all","match_winner","double_chance","asian_handicap","over_1_5_goals","over_6_5_corners","over_7_5_corners"]).optional(),
+  betType: z.enum(["all","match_winner","double_chance","asian_handicap","over_1_5_goals","over_6_5_corners","over_7_5_corners","over_8_5_corners"]).optional(),
 });
 
-const CORNER_TYPES = new Set(["over_6_5_corners","over_7_5_corners"]);
+const CORNER_TYPES = new Set(["over_6_5_corners","over_7_5_corners","over_8_5_corners"]);
 const MATCH_TYPES = new Set(["match_winner","double_chance","asian_handicap","over_1_5_goals"]);
 
 export const runAnalysis = createServerFn({ method: "POST" })

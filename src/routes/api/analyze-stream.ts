@@ -40,7 +40,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const minOdds = Number(url.searchParams.get("minOdds") ?? 1);
         const trustedOnly = url.searchParams.get("trustedOnly") !== "false";
         const refresh = url.searchParams.get("refresh") === "true";
-        const VALID_BET_TYPES = ["all","match_winner","double_chance","asian_handicap","over_1_5_goals","over_6_5_corners","over_7_5_corners"] as const;
+        const VALID_BET_TYPES = ["all","match_winner","double_chance","asian_handicap","over_1_5_goals","over_6_5_corners","over_7_5_corners","over_8_5_corners"] as const;
         const rawBet = (url.searchParams.get("betType") ?? "all").toLowerCase();
         const betType = (VALID_BET_TYPES as readonly string[]).includes(rawBet) ? rawBet : "all";
         // Always run all engines; the betType is only used as an optional cell filter on the client.
@@ -54,7 +54,9 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const over15Floor = Math.max(0, Math.min(100, Number(url.searchParams.get("over15Floor") ?? 60)));
         const matchWinnerFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("matchWinnerFloor") ?? 52)));
         const doubleChanceFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("doubleChanceFloor") ?? 65)));
+        const cornersFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("cornersFloor") ?? 70)));
         const matchThresholds = { winRateFloor, drawRateCeil, over15Floor, matchWinnerFloor, doubleChanceFloor };
+        const cornerThresholds = { cornersFloor };
 
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
@@ -164,7 +166,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     raw: m.raw,
                     fetched_at: new Date().toISOString(),
                   });
-                  const corners = runCorners ? predictCorners(analysis, m.homeId, m.awayId) : [];
+                  const corners = runCorners ? predictCorners(analysis, m.homeId, m.awayId, cornerThresholds) : [];
                   const matchPreds = runMatch ? predictMatchOutcomes(analysis, m.homeId, m.awayId, matchThresholds) : [];
                   const collected: any[] = [];
                   for (const c of corners) collected.push({
@@ -205,8 +207,16 @@ export const Route = createFileRoute("/api/analyze-stream")({
               }
 
               send("status", { message: "Generating final predictions…" });
+              const isCorner = (t: string) => t === "over_6_5_corners" || t === "over_7_5_corners" || t === "over_8_5_corners";
               const passedThreshold = predictions
-                .filter((p) => p.prediction_type === "over_1_5_goals" ? Number(p.confidence) >= over15Floor : meetsConfidenceThreshold(p.prediction_type, Number(p.confidence)))
+                .filter((p) => {
+                  const c = Number(p.confidence);
+                  if (p.prediction_type === "over_1_5_goals") return c >= over15Floor;
+                  if (p.prediction_type === "match_winner") return c >= matchWinnerFloor;
+                  if (p.prediction_type === "double_chance") return c >= doubleChanceFloor;
+                  if (isCorner(p.prediction_type)) return c >= cornersFloor;
+                  return meetsConfidenceThreshold(p.prediction_type, c);
+                })
                 .filter((p) => {
                   const implied = 100 / Number(p.confidence);
                   return implied >= minOdds && implied <= maxOdds;
@@ -253,7 +263,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   predictions_generated: finalPreds.length,
                   avg_confidence: Math.round(avg * 100) / 100,
                   status: "completed",
-                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount, winRateFloor, drawRateCeil, over15Floor, matchWinnerFloor, doubleChanceFloor }),
+                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount, winRateFloor, drawRateCeil, over15Floor, matchWinnerFloor, doubleChanceFloor, cornersFloor }),
                 })
                 .select()
                 .single();
