@@ -170,6 +170,7 @@ export function ScanTable({ predictions }: { predictions: Prediction[] }) {
                       const label =
                         cell.prediction_type === "over_6_5_corners" ? "O6.5" :
                         cell.prediction_type === "over_7_5_corners" ? "O7.5" :
+                        cell.prediction_type === "over_8_5_corners" ? "O8.5" :
                         cell.selection;
                       return (
                         <td key={c.key} className="px-3 py-3 text-center" title={`${cell.selection} · implied odds ${implied}`}>
