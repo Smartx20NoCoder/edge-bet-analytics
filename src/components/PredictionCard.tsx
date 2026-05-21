@@ -39,6 +39,7 @@ function confBar(c: number) {
 const TYPE_LABEL: Record<string, string> = {
   over_6_5_corners: "Over 6.5 Corners",
   over_7_5_corners: "Over 7.5 Corners",
+  over_8_5_corners: "Over 8.5 Corners",
   match_winner: "Match Winner",
   double_chance: "Double Chance",
   asian_handicap: "Asian Handicap",
