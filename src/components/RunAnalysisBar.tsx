@@ -408,3 +408,107 @@ function Field({ label, Icon, children, htmlFor }: { label: string; Icon: any; c
     </div>
   );
 }
+
+// Single-value threshold slider with editable lower/upper bound inputs.
+function ThresholdField({
+  label, value, bounds, onValueChange, onBoundsChange, step = 1,
+}: {
+  label: string;
+  value: number;
+  bounds: [number, number];
+  onValueChange: (v: number) => void;
+  onBoundsChange: (b: [number, number]) => void;
+  step?: number;
+}) {
+  const [lo, hi] = bounds;
+  const clamped = Math.min(Math.max(value, lo), hi);
+  return (
+    <div>
+      <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">
+        <Target className="h-3 w-3" /> {label}
+      </label>
+      <Slider min={lo} max={hi} step={step} value={[clamped]}
+        onValueChange={(v) => onValueChange(v[0] ?? clamped)} className="mt-2" />
+      <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
+        <span className="uppercase tracking-wider">Range</span>
+        <input
+          type="number" value={lo} step={step} min={0} max={hi - step}
+          onChange={(e) => {
+            const next = Math.min(Number(e.target.value) || 0, hi - step);
+            onBoundsChange([next, hi]);
+            if (value < next) onValueChange(next);
+          }}
+          className="h-7 w-16 rounded-md bg-secondary border border-border px-2 text-xs font-mono text-foreground"
+          aria-label="Slider lower bound"
+        />
+        <span>–</span>
+        <input
+          type="number" value={hi} step={step} min={lo + step} max={100}
+          onChange={(e) => {
+            const next = Math.max(Number(e.target.value) || 0, lo + step);
+            onBoundsChange([lo, next]);
+            if (value > next) onValueChange(next);
+          }}
+          className="h-7 w-16 rounded-md bg-secondary border border-border px-2 text-xs font-mono text-foreground"
+          aria-label="Slider upper bound"
+        />
+      </div>
+    </div>
+  );
+}
+
+// Dual-thumb range slider (e.g. odds) with editable lower/upper bound inputs.
+function RangeWithBounds({
+  value, bounds, onValueChange, onBoundsChange, step = 1, min = 0, max = 100, decimals = 0,
+}: {
+  value: [number, number];
+  bounds: [number, number];
+  onValueChange: (v: [number, number]) => void;
+  onBoundsChange: (b: [number, number]) => void;
+  step?: number;
+  min?: number;
+  max?: number;
+  decimals?: number;
+}) {
+  const [blo, bhi] = bounds;
+  const [vlo, vhi] = value;
+  const cLo = Math.min(Math.max(vlo, blo), bhi);
+  const cHi = Math.min(Math.max(vhi, blo), bhi);
+  const fmt = (n: number) => n.toFixed(decimals);
+  return (
+    <div>
+      <Slider
+        min={blo} max={bhi} step={step}
+        value={[cLo, cHi]}
+        onValueChange={(v) => {
+          const [lo, hi] = v;
+          onValueChange([Math.min(lo, hi), Math.max(lo, hi)]);
+        }}
+        aria-label="Range slider"
+        className="mt-2"
+      />
+      <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
+        <span className="uppercase tracking-wider">Range</span>
+        <input
+          type="number" value={fmt(blo)} step={step} min={min} max={bhi - step}
+          onChange={(e) => {
+            const next = Math.min(Number(e.target.value) || min, bhi - step);
+            onBoundsChange([next, bhi]);
+          }}
+          className="h-7 w-16 rounded-md bg-secondary border border-border px-2 text-xs font-mono text-foreground"
+          aria-label="Slider lower bound"
+        />
+        <span>–</span>
+        <input
+          type="number" value={fmt(bhi)} step={step} min={blo + step} max={max}
+          onChange={(e) => {
+            const next = Math.max(Number(e.target.value) || max, blo + step);
+            onBoundsChange([blo, next]);
+          }}
+          className="h-7 w-16 rounded-md bg-secondary border border-border px-2 text-xs font-mono text-foreground"
+          aria-label="Slider upper bound"
+        />
+      </div>
+    </div>
+  );
+}
