@@ -40,7 +40,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const minOdds = Number(url.searchParams.get("minOdds") ?? 1);
         const trustedOnly = url.searchParams.get("trustedOnly") !== "false";
         const refresh = url.searchParams.get("refresh") === "true";
-        const VALID_BET_TYPES = ["all","match_winner","double_chance","asian_handicap","over_1_5_goals","over_6_5_corners","over_7_5_corners"] as const;
+        const VALID_BET_TYPES = ["all","match_winner","double_chance","asian_handicap","over_1_5_goals","over_6_5_corners","over_7_5_corners","over_8_5_corners"] as const;
         const rawBet = (url.searchParams.get("betType") ?? "all").toLowerCase();
         const betType = (VALID_BET_TYPES as readonly string[]).includes(rawBet) ? rawBet : "all";
         // Always run all engines; the betType is only used as an optional cell filter on the client.
@@ -54,7 +54,9 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const over15Floor = Math.max(0, Math.min(100, Number(url.searchParams.get("over15Floor") ?? 60)));
         const matchWinnerFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("matchWinnerFloor") ?? 52)));
         const doubleChanceFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("doubleChanceFloor") ?? 65)));
+        const cornersFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("cornersFloor") ?? 70)));
         const matchThresholds = { winRateFloor, drawRateCeil, over15Floor, matchWinnerFloor, doubleChanceFloor };
+        const cornerThresholds = { cornersFloor };
 
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
