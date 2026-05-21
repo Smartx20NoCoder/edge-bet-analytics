@@ -37,14 +37,23 @@ export function RunAnalysisBar() {
   const [maxMatches, setMaxMatches] = useState(50);
   const [minOdds, setMinOdds] = useState(1.15);
   const [maxOdds, setMaxOdds] = useState(5);
+  const [oddsBounds, setOddsBounds] = useState<[number, number]>([1, 10]);
   const [trustedOnly, setTrustedOnly] = useState(true);
   const [refresh, setRefresh] = useState(false);
   const [betType, setBetType] = useState<string>("all");
-  const [winRateFloor, setWinRateFloor] = useState(45); // percent — team record floor
-  const [drawRateCeil, setDrawRateCeil] = useState(35); // percent — team record ceil
-  const [matchWinnerFloor, setMatchWinnerFloor] = useState(52); // percent — MW confidence floor
-  const [doubleChanceFloor, setDoubleChanceFloor] = useState(65); // percent — DC confidence floor
-  const [over15Floor, setOver15Floor] = useState(60);   // percent — O1.5 confidence floor
+  // Threshold values + adjustable slider bounds for each.
+  const [winRateFloor, setWinRateFloor] = useState(45);
+  const [winRateBounds, setWinRateBounds] = useState<[number, number]>([35, 70]);
+  const [drawRateCeil, setDrawRateCeil] = useState(35);
+  const [drawRateBounds, setDrawRateBounds] = useState<[number, number]>([15, 50]);
+  const [matchWinnerFloor, setMatchWinnerFloor] = useState(52);
+  const [matchWinnerBounds, setMatchWinnerBounds] = useState<[number, number]>([45, 75]);
+  const [doubleChanceFloor, setDoubleChanceFloor] = useState(65);
+  const [doubleChanceBounds, setDoubleChanceBounds] = useState<[number, number]>([55, 90]);
+  const [over15Floor, setOver15Floor] = useState(60);
+  const [over15Bounds, setOver15Bounds] = useState<[number, number]>([50, 95]);
+  const [cornersFloor, setCornersFloor] = useState(70);
+  const [cornersBounds, setCornersBounds] = useState<[number, number]>([55, 95]);
   const [apiKey, setApiKey] = useState<1 | 2>(() => {
     if (typeof window === "undefined") return 1;
     const v = window.localStorage.getItem("betedge.apiKey");
