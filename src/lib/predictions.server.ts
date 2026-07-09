@@ -137,6 +137,13 @@ export type MatchPrediction = {
   riskLevel: "low" | "medium" | "high";
   reasons: string[];
   stats: AnyObj;
+  // EV fields — only ever populated for match_winner, where a real market price exists.
+  // Left undefined for double_chance / asian_handicap / over_1_5_goals: there is no
+  // direct bookmaker price for those markets in this payload, so no genuine EV can be
+  // computed for them. Do not fabricate a number here.
+  modelProbability?: number;
+  marketOdds?: number;
+  expectedValue?: number;
 };
 
 function dataVsRates(side: AnyObj | undefined, scope: "home" | "away" | "total") {
@@ -281,6 +288,13 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
   const winnerRecord = homeFav ? homeAtHome : awayAtAway;
   const winnerRecordOk = winnerRecord.winRate >= winRateFloor && winnerRecord.drawRate <= drawRateCeil;
   if (winnerConf >= matchWinnerFloor && winnerRecordOk) {
+    // Unblended model probability + real market odds, kept separate from "confidence"
+    // (which is blended) so EV isn't graded partly against itself.
+    const modelProbability = homeFav ? mH : mA;
+    const marketOdds = market ? (homeFav ? market.oH : market.oA) : undefined;
+    const expectedValue = marketOdds !== undefined
+      ? Math.round((modelProbability * marketOdds - 1) * 10000) / 10000
+      : undefined;
     out.push({
       type: "match_winner",
       selection,
@@ -291,8 +305,14 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
         `Away @ away: ${(awayAtAway.winRate * 100).toFixed(0)}% W / ${(awayAtAway.drawRate * 100).toFixed(0)}% D (${awayAtAway.count} g).`,
         marketReason,
         agree ? "Model and market agree on the favourite." : "⚠️ Model and market disagree — confidence penalised by 5 pts.",
+        expectedValue !== undefined
+          ? `EV = (${(modelProbability * 100).toFixed(1)}% model prob × ${marketOdds!.toFixed(2)} odds) − 1 = ${(expectedValue * 100).toFixed(1)}%.`
+          : "No market odds — EV not computable.",
       ],
       stats: { pH, pA, pD, model: { mH, mD, mA }, market, agree },
+      modelProbability,
+      marketOdds,
+      expectedValue,
     });
   }
 
@@ -303,8 +323,9 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
       selection: homeFav ? "Home or Draw (1X)" : "Draw or Away (X2)",
       confidence: Math.min(95, dcConf),
       riskLevel: dcConf >= 78 ? "low" : dcConf >= 70 ? "medium" : "high",
-      reasons: [`Combined blended probability ${dcConf.toFixed(1)}%.`, marketReason],
+      reasons: [`Combined blended probability ${dcConf.toFixed(1)}%.`, marketReason, "No direct market price for double chance — EV not computable, confidence only."],
       stats: { pH, pA, pD, market },
+      // No modelProbability/marketOdds/expectedValue: no real market price exists for this bet type.
     });
   }
 
@@ -318,8 +339,9 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
         selection: homeFav ? "Home -0.25 AH" : "Away -0.25 AH",
         confidence: ahConf,
         riskLevel: ahConf >= 82 ? "low" : "medium",
-        reasons: [`Blended probability gap ${(edge * 100).toFixed(0)} pts justifies a quarter-line.`, marketReason],
+        reasons: [`Blended probability gap ${(edge * 100).toFixed(0)} pts justifies a quarter-line.`, marketReason, "No direct market price for this handicap line — EV not computable, confidence only."],
         stats: { edge, pH, pA, market },
+        // No modelProbability/marketOdds/expectedValue: no real market price exists for this line.
       });
     }
   }
@@ -339,8 +361,9 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
         selection: "Over 1.5 Goals",
         confidence: Math.min(96, ov15),
         riskLevel: ov15 >= 85 ? "low" : "medium",
-        reasons: [`λ home ${lamH.toFixed(2)}, λ away ${lamA.toFixed(2)} — Poisson P(2+) = ${ov15.toFixed(1)}%.`],
+        reasons: [`λ home ${lamH.toFixed(2)}, λ away ${lamA.toFixed(2)} — Poisson P(2+) = ${ov15.toFixed(1)}%.`, "No goals-line market price parsed — EV not computable, confidence only."],
         stats: { lamH, lamA, pOver15 },
+        // No modelProbability/marketOdds/expectedValue: goals-line odds aren't parsed from this payload.
       });
     }
 
@@ -396,4 +419,4 @@ export const CONFIDENCE_THRESHOLDS: Record<string, number> = {
 export function meetsConfidenceThreshold(type: string, confidence: number): boolean {
   const t = CONFIDENCE_THRESHOLDS[type] ?? 75;
   return Number(confidence) >= t;
-}
+  }
