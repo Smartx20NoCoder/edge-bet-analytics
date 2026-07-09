@@ -144,12 +144,27 @@ export const runAnalysis = createServerFn({ method: "POST" })
             risk_level: p.riskLevel,
             reasons: p.reasons,
             stats: p.stats,
-            recommendation: `Lean ${p.selection} (${p.confidence}% model confidence).`,
+            // Only match_winner ever has a real expectedValue — see predictions.server.ts.
+            recommendation: p.expectedValue !== undefined
+              ? `Lean ${p.selection} — ${p.expectedValue >= 0 ? "+" : ""}${(p.expectedValue * 100).toFixed(1)}% edge at ${p.marketOdds!.toFixed(2)} odds.`
+              : `Lean ${p.selection} (${p.confidence}% model confidence, no market price).`,
+            market_odds: p.marketOdds ?? null,
+            model_probability: p.modelProbability ?? null,
+            expected_value: p.expectedValue ?? null,
           });
         }
 
         const filteredAll = betType === "all" ? all : all.filter((x) => x.prediction_type === betType);
-        filteredAll.sort((a, b) => Number(b.confidence) - Number(a.confidence));
+        // Prefer real, priced edge over raw confidence: picks with a computed expected_value
+        // sort by EV first (highest edge vs the market), everything else (no market price
+        // available for that bet type) falls back to confidence ordering below them.
+        filteredAll.sort((a, b) => {
+          const evA = a.expected_value, evB = b.expected_value;
+          if (evA != null && evB != null) return Number(evB) - Number(evA);
+          if (evA != null) return -1;
+          if (evB != null) return 1;
+          return Number(b.confidence) - Number(a.confidence);
+        });
         const best = filteredAll[0];
         if (best) {
           predictions.push({
@@ -168,10 +183,17 @@ export const runAnalysis = createServerFn({ method: "POST" })
     }
 
     // Threshold + implied-odds filter, then top maxPicks overall.
+    // Same EV-first, confidence-fallback ordering as above, applied across all matches.
     const passedThreshold = predictions
       .filter((p) => meetsConfidenceThreshold(p.prediction_type, Number(p.confidence)))
       .filter((p) => 100 / Number(p.confidence) >= minOdds)
-      .sort((a, b) => Number(b.confidence) - Number(a.confidence))
+      .sort((a, b) => {
+        const evA = a.expected_value, evB = b.expected_value;
+        if (evA != null && evB != null) return Number(evB) - Number(evA);
+        if (evA != null) return -1;
+        if (evB != null) return 1;
+        return Number(b.confidence) - Number(a.confidence);
+      })
       .slice(0, maxPicks);
 
     // Bookmaker availability check — annotate, don't drop.
