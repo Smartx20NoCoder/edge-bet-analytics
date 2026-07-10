@@ -373,9 +373,22 @@ export const getDashboardStats = createServerFn({ method: "GET" }).handler(async
 });
 
 export const checkApiStatus = createServerFn({ method: "GET" }).handler(async () => {
-  const hasKey = Boolean(process.env.ISPORTS_API_KEY);
-  return { hasKey, live: hasKey, error: hasKey ? null : "no key" };
+  const { getApiKeySlotStatus } = await import("./isports.server");
+  const slots = await getApiKeySlotStatus();
+  const hasKey = slots.slot1 || slots.slot2;
+  return { hasKey, live: hasKey, error: hasKey ? null : "no key", slots };
 });
+
+// Save (or clear, by passing an empty string) the iSportsAPI key for slot 1 or 2.
+// Server-only — the key value is never returned to the browser by any function in
+// this file, only booleans indicating whether a slot is configured.
+export const setApiKey = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ slot: z.union([z.literal(1), z.literal(2)]), key: z.string().max(200) }).parse(d))
+  .handler(async ({ data }) => {
+    const { setApiKeyForSlot } = await import("./isports.server");
+    await setApiKeyForSlot(data.slot, data.key);
+    return { ok: true };
+  });
 
 export const getApiUsageToday = createServerFn({ method: "GET" }).handler(async () => {
   const today = new Date().toISOString().slice(0, 10);
