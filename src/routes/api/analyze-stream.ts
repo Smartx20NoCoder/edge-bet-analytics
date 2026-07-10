@@ -178,7 +178,14 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   for (const p of matchPreds) collected.push({
                     engine: "match", prediction_type: p.type, selection: p.selection,
                     confidence: p.confidence, risk_level: p.riskLevel, reasons: p.reasons,
-                    stats: p.stats, recommendation: `Lean ${p.selection} (${p.confidence}% model confidence).`,
+                    stats: p.stats,
+                    // Only match_winner ever has a real expectedValue — see predictions.server.ts.
+                    recommendation: p.expectedValue !== undefined
+                      ? `Lean ${p.selection} — ${p.expectedValue >= 0 ? "+" : ""}${(p.expectedValue * 100).toFixed(1)}% edge at ${p.marketOdds!.toFixed(2)} odds.`
+                      : `Lean ${p.selection} (${p.confidence}% model confidence, no market price).`,
+                    market_odds: p.marketOdds ?? null,
+                    model_probability: p.modelProbability ?? null,
+                    expected_value: p.expectedValue ?? null,
                   });
                   // Keep ALL qualifying picks across all 4 engines for this match.
                   // betType is no longer used to restrict storage — clients filter per-cell in the table.
@@ -221,7 +228,15 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   const implied = 100 / Number(p.confidence);
                   return implied >= minOdds && implied <= maxOdds;
                 })
-                .sort((a, b) => Number(b.confidence) - Number(a.confidence));
+                .sort((a, b) => {
+                  // Real edge (expected_value) first when present — this is what "best value" should
+                  // mean — falling back to confidence for picks with no computable market price.
+                  const evA = a.expected_value, evB = b.expected_value;
+                  if (evA != null && evB != null) return Number(evB) - Number(evA);
+                  if (evA != null) return -1;
+                  if (evB != null) return 1;
+                  return Number(b.confidence) - Number(a.confidence);
+                });
 
               // Bookmaker availability check — one call per unique match, cached + annotated.
               const oddsByMatch = new Map<string, boolean>();
