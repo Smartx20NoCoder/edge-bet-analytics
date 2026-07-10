@@ -33,6 +33,9 @@ const MINOR_QUALIFIERS = [
   "queensland", "victoria", "victorian", "new south wales", "western australia",
   "south australia", "tasmania", "northern territory", "capital territory",
   "state league", "npl", "county", "district", "metro",
+  // Australian state-league abbreviations — these are the actual strings that show up
+  // in league names (e.g. "TAS Premier Championship"), not the spelled-out state name.
+  "nsw", "vic", "qld", " sa ", " wa ", "tas", "act", " nt ",
 ];
 // A trailing tier number ("... League 2", "... Premier League 3") is a strong signal of a
 // lower division that a loose substring match on "premier league" alone would miss.
@@ -277,6 +280,19 @@ export const Route = createFileRoute("/api/analyze-stream")({
               const finalPreds: any[] = passedThreshold.map((p) => {
                 const ok = oddsByMatch.get(String(p.match_id)) ?? true;
                 if (!ok) noOddsCount++;
+                // If the live odds feed couldn't confirm a real bookmaker price for this match,
+                // the EV number (computed from odds embedded in the /analysis payload, a separate
+                // and less reliable source) isn't trustworthy either — null it out rather than
+                // show a confident edge figure next to a "no odds" warning.
+                if (!ok && p.expected_value != null) {
+                  return {
+                    ...p,
+                    market_odds: null,
+                    expected_value: null,
+                    recommendation: `Lean ${p.selection} (${p.confidence}% model confidence, price unconfirmed by live odds feed).`,
+                    stats: { ...(p.stats ?? {}), oddsAvailable: ok },
+                  };
+                }
                 return { ...p, stats: { ...(p.stats ?? {}), oddsAvailable: ok } };
               });
               if (noOddsCount) {
