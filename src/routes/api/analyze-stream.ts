@@ -26,8 +26,37 @@ const TRUSTED_LEAGUE_PATTERNS = [
   "mls", "liga mx", "brasileir", "j league", "k league",
   "scottish premiership", "belgian", "swiss super",
 ];
-const isBlocked = (n?: string) => !n || BLOCKED_KEYWORDS.some((k) => n.toLowerCase().includes(k));
-const isTrusted = (n?: string) => !!n && TRUSTED_LEAGUE_PATTERNS.some((p) => n.toLowerCase().includes(p));
+// Regional/state qualifiers that indicate a lower, non-elite competition even when the
+// name contains a trusted-sounding phrase like "premier league" (e.g. Australian state
+// NPL comps branded "Queensland Premier League", "Victoria Premier League", etc.).
+const MINOR_QUALIFIERS = [
+  "queensland", "victoria", "victorian", "new south wales", "western australia",
+  "south australia", "tasmania", "northern territory", "capital territory",
+  "state league", "npl", "county", "district", "metro",
+];
+// A trailing tier number ("... League 2", "... Premier League 3") is a strong signal of a
+// lower division that a loose substring match on "premier league" alone would miss.
+function hasTierNumber(name: string): boolean {
+  return /\b[2-9]\b\s*$/.test(name.trim());
+}
+// Women's fixtures aren't reliably flagged by league name alone (e.g. "WK League" doesn't
+// say "women") — the marker is usually on the team names instead ("(W)" suffix, etc.).
+function isWomensFixture(homeName?: string, awayName?: string): boolean {
+  const check = (n?: string) => {
+    if (!n) return false;
+    const s = n.toLowerCase();
+    return /\(w\)\s*$/i.test(n.trim()) || s.includes("women") || s.includes("ladies") || s.includes("féminine") || s.includes("frauen") || s.includes("damen");
+  };
+  return check(homeName) || check(awayName);
+}
+const isBlocked = (n?: string) => !n || BLOCKED_KEYWORDS.some((k) => n.toLowerCase().includes(k)) || hasTierNumber(n);
+const isTrusted = (n?: string) => {
+  if (!n) return false;
+  const lower = n.toLowerCase();
+  if (MINOR_QUALIFIERS.some((q) => lower.includes(q))) return false;
+  if (hasTierNumber(n)) return false;
+  return TRUSTED_LEAGUE_PATTERNS.some((p) => lower.includes(p));
+};
 
 export const Route = createFileRoute("/api/analyze-stream")({
   server: {
@@ -91,11 +120,11 @@ export const Route = createFileRoute("/api/analyze-stream")({
 
               const futureOnly = all.filter((m) => m.matchTime * 1000 > now);
               const inWindow = futureOnly.filter((m) => m.matchTime * 1000 <= windowEnd);
-              const afterBlocked = inWindow.filter((m) => !isBlocked(m.leagueName));
+              const afterBlocked = inWindow.filter((m) => !isBlocked(m.leagueName) && !isWomensFixture(m.homeName, m.awayName));
               const afterTrusted = trustedOnly ? afterBlocked.filter((m) => isTrusted(m.leagueName)) : afterBlocked;
 
               send("status", {
-                message: `Filter breakdown — total ${all.length} → future ${futureOnly.length} → within ${timeframeHours}h ${inWindow.length} → eligible leagues (no youth/friendly/cup/qualifier/etc) ${afterBlocked.length} → ${trustedOnly ? "major leagues" : "all leagues"} ${afterTrusted.length}.`,
+                message: `Filter breakdown — total ${all.length} → future ${futureOnly.length} → within ${timeframeHours}h ${inWindow.length} → eligible leagues (no youth/friendly/cup/qualifier/women/etc) ${afterBlocked.length} → ${trustedOnly ? "major leagues" : "all leagues"} ${afterTrusted.length}.`,
               });
 
               if (!afterTrusted.length) {
