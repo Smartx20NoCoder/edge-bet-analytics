@@ -3,13 +3,9 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 const BASE = "http://api.isportsapi.com/sport/football";
 
-function keyForIndex(idx: 1 | 2): string | undefined {
-  if (idx === 1) return process.env.ISPORTS_API_KEY || undefined;
-  return process.env.ISPORTS_API_KEY_2 || undefined;
-}
-
-// In-memory cache of key statuses to avoid a DB roundtrip on every call.
-let statusCache: { fetchedAt: number; rows: { key_index: number; exhausted_at: string | null; active: boolean }[] } | null = null;
+// In-memory cache of key statuses (now including the key VALUE itself, sourced
+// from api_key_status.api_key) to avoid a DB roundtrip on every call.
+let statusCache: { fetchedAt: number; rows: { key_index: number; exhausted_at: string | null; active: boolean; api_key: string | null }[] } | null = null;
 const STATUS_TTL_MS = 30_000;
 
 function utcDayKey(d: Date): string {
@@ -18,8 +14,8 @@ function utcDayKey(d: Date): string {
 
 async function getKeyStatuses() {
   if (statusCache && Date.now() - statusCache.fetchedAt < STATUS_TTL_MS) return statusCache.rows;
-  const { data } = await supabaseAdmin.from("api_key_status").select("key_index, exhausted_at, active");
-  let rows = (data ?? []) as { key_index: number; exhausted_at: string | null; active: boolean }[];
+  const { data } = await supabaseAdmin.from("api_key_status").select("key_index, exhausted_at, active, api_key");
+  let rows = (data ?? []) as { key_index: number; exhausted_at: string | null; active: boolean; api_key: string | null }[];
 
   // Ensure both rows exist.
   const missing: number[] = [];
@@ -30,7 +26,7 @@ async function getKeyStatuses() {
     await supabaseAdmin.from("api_key_status").upsert(
       missing.map((key_index) => ({ key_index, active: true, exhausted_at: null, updated_at: new Date().toISOString() })),
     );
-    for (const key_index of missing) rows.push({ key_index, active: true, exhausted_at: null });
+    for (const key_index of missing) rows.push({ key_index, active: true, exhausted_at: null, api_key: null });
   }
 
   // Daily auto-reset: if exhausted_at is from a previous UTC day, clear it.
@@ -52,6 +48,15 @@ async function getKeyStatuses() {
 }
 
 function invalidateStatusCache() { statusCache = null; }
+
+/** Resolve the key for a slot: DB-stored value (set via Settings page) wins, else env var fallback. */
+async function keyForIndex(idx: 1 | 2): Promise<string | undefined> {
+  const rows = await getKeyStatuses();
+  const dbKey = rows.find((r) => r.key_index === idx)?.api_key;
+  if (dbKey) return dbKey;
+  if (idx === 1) return process.env.ISPORTS_API_KEY || undefined;
+  return process.env.ISPORTS_API_KEY_2 || undefined;
+}
 
 // Manual override: when set, get() will use only this key (no failover).
 let forcedKey: 1 | 2 | null = null;
@@ -93,7 +98,7 @@ function isQuotaResponse(json: any, httpStatus: number): boolean {
 }
 
 async function tryWithKey<T = any>(idx: 1 | 2, path: string, params: Record<string, string>): Promise<{ ok: true; json: T } | { ok: false; quota: boolean; reason: string }> {
-  const k = keyForIndex(idx);
+  const k = await keyForIndex(idx);
   if (!k) return { ok: false, quota: false, reason: `ISPORTS_API_KEY${idx === 2 ? "_2" : ""} not configured` };
   const qs = new URLSearchParams({ api_key: k, ...params }).toString();
   const url = `${BASE}${path}?${qs}`;
@@ -151,7 +156,7 @@ async function get<T = any>(path: string, params: Record<string, string>): Promi
       // If we just exhausted key 1 and key 2 is available, log a failover.
       if (idx === 1 && i + 1 < order.length && !attemptedFailover) {
         const nextIdx = order[i + 1];
-        const otherK = keyForIndex(nextIdx);
+        const otherK = await keyForIndex(nextIdx);
         if (otherK) {
           attemptedFailover = true;
           console.log(`[iSportsAPI] switching to key ${nextIdx} after key 1 quota`);
@@ -366,4 +371,27 @@ export async function fetchResultsByDate(date: string): Promise<ResultRow[]> {
     })
     .filter((r: any) => r.matchId && isFinished(r._rawStatus, r.homeScore, r.awayScore))
     .map(({ _rawStatus, ...r }: any) => r);
+}
+
+/** Set (or clear, with an empty string) the DB-stored API key for a slot. Used by the Settings page. */
+export async function setApiKeyForSlot(idx: 1 | 2, key: string): Promise<void> {
+  await supabaseAdmin.from("api_key_status").upsert({
+    key_index: idx,
+    api_key: key.trim() || null,
+    // Setting a fresh key should also clear any stale exhausted/inactive flag.
+    exhausted_at: null,
+    active: true,
+    updated_at: new Date().toISOString(),
+  });
+  invalidateStatusCache();
+}
+
+/** Whether a key is currently configured for a slot (DB or env), without exposing the value. */
+export async function getApiKeySlotStatus(): Promise<{ slot1: boolean; slot2: boolean; slot1Source: "db" | "env" | "none"; slot2Source: "db" | "env" | "none" }> {
+  const rows = await getKeyStatuses();
+  const r1 = rows.find((r) => r.key_index === 1);
+  const r2 = rows.find((r) => r.key_index === 2);
+  const slot1Source: "db" | "env" | "none" = r1?.api_key ? "db" : process.env.ISPORTS_API_KEY ? "env" : "none";
+  const slot2Source: "db" | "env" | "none" = r2?.api_key ? "db" : process.env.ISPORTS_API_KEY_2 ? "env" : "none";
+  return { slot1: slot1Source !== "none", slot2: slot2Source !== "none", slot1Source, slot2Source };
 }
