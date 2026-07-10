@@ -30,14 +30,39 @@ const TRUSTED_LEAGUE_PATTERNS = [
   "scottish premiership", "belgian", "swiss super",
 ];
 
+// Regional/state qualifiers that indicate a lower, non-elite competition even when the
+// name contains a trusted-sounding phrase like "premier league" (e.g. Australian state
+// NPL comps branded "Queensland Premier League", "Victoria Premier League", etc.).
+const MINOR_QUALIFIERS = [
+  "queensland", "victoria", "victorian", "new south wales", "western australia",
+  "south australia", "tasmania", "northern territory", "capital territory",
+  "state league", "npl", "county", "district", "metro",
+];
+// A trailing tier number ("... League 2", "... Premier League 3") is a strong signal of a
+// lower division that a loose substring match on "premier league" alone would miss.
+function hasTierNumber(name: string): boolean {
+  return /\b[2-9]\b\s*$/.test(name.trim());
+}
+// Women's fixtures aren't reliably flagged by league name alone (e.g. "WK League" doesn't
+// say "women") — the marker is usually on the team names instead ("(W)" suffix, etc.).
+export function isWomensFixture(homeName?: string, awayName?: string): boolean {
+  const check = (n?: string) => {
+    if (!n) return false;
+    const s = n.toLowerCase();
+    return /\(w\)\s*$/i.test(n.trim()) || s.includes("women") || s.includes("ladies") || s.includes("féminine") || s.includes("frauen") || s.includes("damen");
+  };
+  return check(homeName) || check(awayName);
+}
 function isBlocked(name?: string) {
   if (!name) return true;
   const n = name.toLowerCase();
-  return BLOCKED_KEYWORDS.some((k) => n.includes(k));
+  return BLOCKED_KEYWORDS.some((k) => n.includes(k)) || hasTierNumber(name);
 }
 function isTrusted(name?: string) {
   if (!name) return false;
   const n = name.toLowerCase();
+  if (MINOR_QUALIFIERS.some((q) => n.includes(q))) return false;
+  if (hasTierNumber(name)) return false;
   return TRUSTED_LEAGUE_PATTERNS.some((p) => n.includes(p));
 }
 
@@ -76,6 +101,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
       .filter((m) => m.matchTime * 1000 > now) // strictly future
       .filter((m) => m.matchTime * 1000 <= windowEnd)
       .filter((m) => !isBlocked(m.leagueName))
+      .filter((m) => !isWomensFixture(m.homeName, m.awayName))
       .filter((m) => (trustedOnly ? isTrusted(m.leagueName) : true))
       .sort((a, b) => a.matchTime - b.matchTime)
       .slice(0, maxMatches);
