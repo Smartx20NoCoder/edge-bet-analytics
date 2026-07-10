@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, CheckCircle2, Clock, ShieldAlert, ShieldCheck, TrendingUp, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, ShieldAlert, ShieldCheck, TrendingUp, TrendingDown, XCircle } from "lucide-react";
 
 export type Prediction = {
   id: string;
@@ -23,6 +23,13 @@ export type Prediction = {
   ft_status?: string | null;
   is_correct?: boolean | null;
   stats?: any;
+  // Real edge vs the bookmaker's price — only ever populated for match_winner,
+  // where a genuine market price exists in this API's data. Null for every
+  // other bet type (corners, double chance, asian handicap, over 1.5 goals):
+  // there is no real market price to compare against, so no EV is shown for them.
+  market_odds?: number | string | null;
+  model_probability?: number | string | null;
+  expected_value?: number | string | null;
 };
 
 function confColor(c: number) {
@@ -52,6 +59,8 @@ export function PredictionCard({ p }: { p: Prediction }) {
   const ko = p.kickoff ? new Date(p.kickoff) : null;
   const impliedOdds = (100 / conf).toFixed(2);
   const hasResult = p.home_score != null && p.away_score != null;
+  const ev = p.expected_value != null ? Number(p.expected_value) : null;
+  const marketOdds = p.market_odds != null ? Number(p.market_odds) : null;
   return (
     <div className="glass rounded-xl p-5 flex flex-col gap-4 hover:translate-y-[-2px] transition-transform">
       <div className="flex items-start justify-between gap-3">
@@ -75,6 +84,18 @@ export function PredictionCard({ p }: { p: Prediction }) {
             <Badge variant="outline" className="border-gold/50 bg-gold/10 text-gold text-[10px] uppercase tracking-wider gap-1">
               <AlertTriangle className="h-3 w-3" />
               No Odds
+            </Badge>
+          )}
+          {ev !== null && marketOdds !== null && (
+            <Badge
+              variant="outline"
+              className={cn(
+                "text-[10px] uppercase tracking-wider gap-1 font-mono",
+                ev >= 0 ? "border-neon/50 bg-neon/10 text-neon" : "border-destructive/50 bg-destructive/10 text-destructive",
+              )}
+            >
+              {ev >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+              {ev >= 0 ? "+" : ""}{(ev * 100).toFixed(1)}% edge @ {marketOdds.toFixed(2)}
             </Badge>
           )}
         </div>
