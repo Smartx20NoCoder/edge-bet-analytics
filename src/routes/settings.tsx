@@ -109,9 +109,8 @@ function Settings() {
 
       <div className="glass rounded-xl p-6 space-y-2 text-sm">
         <h2 className="text-sm uppercase tracking-widest text-muted-foreground">Engines</h2>
-        <p><span className="text-neon font-semibold">Corner Engine</span> — Over 6.5 corners; weighted formula on attacking, conceded, shot-volume and tempo. Threshold: ≥75% confidence and ≥8 projected corners. Top 5 only.</p>
-        <p><span className="text-gold font-semibold">Match Outcome Engine</span> — Match winner, double chance, Asian handicap, Over 1.5 goals. Combines form, scoring rates, strength index and Poisson goal model. Threshold: ≥75% confidence; friendlies and youth competitions filtered.</p>
-        <p><span className="text-neon font-semibold">Expected Value</span> — computed only for Match Winner picks, using unblended model probability against the real bookmaker price. Other bet types show confidence only — there's no real market price in this API's data to compare against for those.</p>
+        <p><span className="text-gold font-semibold">Match Outcome Engine</span> — Match Winner and Over 2.5 Goals only. Match Winner combines form, scoring rates and a market-probability blend; Over 2.5 uses a Poisson goal model. Double chance, Asian handicap and corners were removed — no real market price exists for those bet types in this API's data, so no genuine EV could ever be computed for them.</p>
+        <p><span className="text-neon font-semibold">Expected Value</span> — computed for Match Winner picks (always, when market odds exist) and for Over 2.5 Goals picks (only when the market's own total line is exactly 2.5 — a different line, like 2.25 or 2.75, isn't a fair comparison to our model's "over 2.5" probability, so EV is left blank rather than approximated). "No Odds" picks also show no EV, even if one was computed internally — an unconfirmed price isn't a trustworthy edge.</p>
       </div>
 
       <div className="glass rounded-xl p-6 text-xs text-muted-foreground">
