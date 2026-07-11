@@ -131,16 +131,16 @@ export function predictCorners(
 // ---------------- Match outcomes ----------------
 
 export type MatchPrediction = {
-  type: "match_winner" | "double_chance" | "asian_handicap" | "over_1_5_goals";
+  type: "match_winner" | "double_chance" | "asian_handicap" | "over_2_5_goals";
   selection: string;
   confidence: number;
   riskLevel: "low" | "medium" | "high";
   reasons: string[];
   stats: AnyObj;
-  // EV fields — only ever populated for match_winner, where a real market price exists.
-  // Left undefined for double_chance / asian_handicap / over_1_5_goals: there is no
-  // direct bookmaker price for those markets in this payload, so no genuine EV can be
-  // computed for them. Do not fabricate a number here.
+  // EV fields — populated for match_winner (always, when market odds exist) and for
+  // over_2_5_goals (only when the market's own total line is exactly 2.5). Left undefined
+  // for double_chance / asian_handicap: no direct bookmaker price exists for those markets
+  // in this payload, so no genuine EV can be computed. Do not fabricate a number here.
   modelProbability?: number;
   marketOdds?: number;
   expectedValue?: number;
@@ -232,10 +232,42 @@ function extractMarketProbs(analysis: AnyObj): { pH: number; pD: number; pA: num
   return undefined;
 }
 
+// Extract fair (overround-removed) market probabilities for the goals Over/Under market.
+// Only trust this when the market's own total line is 2.5 — comparing our Poisson model's
+// P(over 2.5) against a bookmaker's price for a different line (2.25, 2.75, 3, etc.) would
+// be comparing two different bets and produce a meaningless EV number.
+function extractGoalsMarketProbs(analysis: AnyObj): { totalLine: number; oOver: number; oUnder: number; pOver: number; pUnder: number } | undefined {
+  const d = root(analysis);
+  const tryPair = (over: any, total: any, under: any) => {
+    const oOver = n(over), totalLine = n(total), oUnder = n(under);
+    if (!oOver || !oUnder || totalLine === undefined || oOver < 1.01 || oUnder < 1.01) return undefined;
+    const iOver = 1 / oOver, iUnder = 1 / oUnder;
+    const s = iOver + iUnder;
+    return { totalLine, oOver, oUnder, pOver: iOver / s, pUnder: iUnder / s };
+  };
+
+  const direct = tryPair(d.overOdds, d.totalGoals ?? d.total, d.underOdds);
+  if (direct) return direct;
+
+  const allRows: Row[] = [
+    ...parseRows(d.homeLastMatches),
+    ...parseRows(d.awayLastMatches),
+    ...parseRows(d.headToHead),
+  ];
+  const targetId = d.matchId ? String(d.matchId) : undefined;
+  for (const r of allRows) {
+    if (targetId && r[COL.matchId] !== targetId) continue;
+    const t = tryPair(r[COL.initialOver], r[COL.initialTotal], r[COL.initialUnder])
+      ?? tryPair(r[COL.instantOver], r[COL.instantTotal], r[COL.instantUnder]);
+    if (t) return t;
+  }
+  return undefined;
+}
+
 export type MatchThresholds = {
   winRateFloor?: number;       // 0..1, default 0.45
   drawRateCeil?: number;       // 0..1, default 0.35
-  over15Floor?: number;        // 0..100, default 60
+  over25Floor?: number;        // 0..100, default 55
   matchWinnerFloor?: number;   // 0..100, default 52
   doubleChanceFloor?: number;  // 0..100, default 65
 };
@@ -243,7 +275,7 @@ export type MatchThresholds = {
 export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?: string, thresholds: MatchThresholds = {}): MatchPrediction[] {
   const winRateFloor = thresholds.winRateFloor ?? 0.45;
   const drawRateCeil = thresholds.drawRateCeil ?? 0.35;
-  const over15Floor = thresholds.over15Floor ?? 60;
+  const over25Floor = thresholds.over25Floor ?? 55;
   const matchWinnerFloor = thresholds.matchWinnerFloor ?? 52;
   const doubleChanceFloor = thresholds.doubleChanceFloor ?? 65;
   const d = root(analysis);
@@ -320,27 +352,51 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
   // either in this API's data, so no genuine EV can ever be computed for them. Keeping the
   // scanner focused on match_winner and over_1_5_goals, where a real edge can be measured.
 
-  // Goals — Poisson on scored/conceded.
+  // Goals — Poisson on scored/conceded. Over 2.5 rather than 1.5: 1.5 odds are typically
+  // so short (~1.30-1.50) there's little room for real EV even when the model is right.
   const lamH = (homeAtHome.scoredAvg ?? 0) * 0.65 + (awayAtAway.concededAvg ?? 0) * 0.35;
   const lamA = (awayAtAway.scoredAvg ?? 0) * 0.65 + (homeAtHome.concededAvg ?? 0) * 0.35;
   if (lamH > 0 && lamA > 0) {
+    // P(total <= 2) — every (home goals, away goals) combination summing to 0, 1, or 2.
     const p00 = poissonP(0, lamH) * poissonP(0, lamA);
     const p10 = poissonP(1, lamH) * poissonP(0, lamA);
     const p01 = poissonP(0, lamH) * poissonP(1, lamA);
-    const pOver15 = Math.max(0, 1 - p00 - p10 - p01);
-    const ov15 = Math.round(pOver15 * 1000) / 10;
-    if (ov15 >= over15Floor) {
+    const p20 = poissonP(2, lamH) * poissonP(0, lamA);
+    const p11 = poissonP(1, lamH) * poissonP(1, lamA);
+    const p02 = poissonP(0, lamH) * poissonP(2, lamA);
+    const pOver25 = Math.max(0, 1 - p00 - p10 - p01 - p20 - p11 - p02);
+    const ov25 = Math.round(pOver25 * 1000) / 10;
+    if (ov25 >= over25Floor) {
+      const goalsMarket = extractGoalsMarketProbs(analysis);
+      const lineMatches = goalsMarket && Math.abs(goalsMarket.totalLine - 2.5) < 0.01;
+      const modelProbability = pOver25; // unblended Poisson probability, not mixed with market
+      const marketOdds = lineMatches ? goalsMarket!.oOver : undefined;
+      const expectedValue = marketOdds !== undefined
+        ? Math.round((modelProbability * marketOdds - 1) * 10000) / 10000
+        : undefined;
+      const marketReasonGoals = goalsMarket
+        ? (lineMatches
+            ? `Market total 2.5 — Over ${goalsMarket.oOver.toFixed(2)} / Under ${goalsMarket.oUnder.toFixed(2)}.`
+            : `Market total line is ${goalsMarket.totalLine}, not 2.5 — EV not computable for a mismatched line.`)
+        : "No goals-line market price parsed — EV not computable, confidence only.";
       out.push({
-        type: "over_1_5_goals",
-        selection: "Over 1.5 Goals",
-        confidence: Math.min(96, ov15),
-        riskLevel: ov15 >= 85 ? "low" : "medium",
-        reasons: [`λ home ${lamH.toFixed(2)}, λ away ${lamA.toFixed(2)} — Poisson P(2+) = ${ov15.toFixed(1)}%.`, "No goals-line market price parsed — EV not computable, confidence only."],
-        stats: { lamH, lamA, pOver15 },
-        // No modelProbability/marketOdds/expectedValue: goals-line odds aren't parsed from this payload.
+        type: "over_2_5_goals",
+        selection: "Over 2.5 Goals",
+        confidence: Math.min(96, ov25),
+        riskLevel: ov25 >= 85 ? "low" : "medium",
+        reasons: [
+          `λ home ${lamH.toFixed(2)}, λ away ${lamA.toFixed(2)} — Poisson P(3+) = ${ov25.toFixed(1)}%.`,
+          marketReasonGoals,
+          expectedValue !== undefined
+            ? `EV = (${(modelProbability * 100).toFixed(1)}% model prob × ${marketOdds!.toFixed(2)} odds) − 1 = ${(expectedValue * 100).toFixed(1)}%.`
+            : "EV not computable for this pick.",
+        ],
+        stats: { lamH, lamA, pOver25, goalsMarket },
+        modelProbability,
+        marketOdds,
+        expectedValue,
       });
     }
-
   }
 
   return out;
@@ -384,7 +440,8 @@ export const CONFIDENCE_THRESHOLDS: Record<string, number> = {
   match_winner: 52,
   double_chance: 65,
   asian_handicap: 70,
-  over_1_5_goals: 60,
+  over_2_5_goals: 55,
+  over_1_5_goals: 60, // legacy — kept so old rows/analytics referencing this type still resolve.
   over_6_5_corners: 65,
   over_7_5_corners: 68,
   over_8_5_corners: 72,
