@@ -72,7 +72,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const minOdds = Number(url.searchParams.get("minOdds") ?? 1);
         const trustedOnly = url.searchParams.get("trustedOnly") !== "false";
         const refresh = url.searchParams.get("refresh") === "true";
-        const VALID_BET_TYPES = ["all","match_winner","over_1_5_goals"] as const;
+        const VALID_BET_TYPES = ["all","match_winner","over_2_5_goals"] as const;
         const rawBet = (url.searchParams.get("betType") ?? "all").toLowerCase();
         const betType = (VALID_BET_TYPES as readonly string[]).includes(rawBet) ? rawBet : "all";
         // Corners, double chance and Asian handicap removed from the scanner — no real
@@ -85,11 +85,11 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const maxOdds = Number(url.searchParams.get("maxOdds") ?? 100);
         const winRateFloor = Math.max(0, Math.min(1, Number(url.searchParams.get("winRateFloor") ?? 0.45)));
         const drawRateCeil = Math.max(0, Math.min(1, Number(url.searchParams.get("drawRateCeil") ?? 0.35)));
-        const over15Floor = Math.max(0, Math.min(100, Number(url.searchParams.get("over15Floor") ?? 60)));
+        const over25Floor = Math.max(0, Math.min(100, Number(url.searchParams.get("over25Floor") ?? 55)));
         const matchWinnerFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("matchWinnerFloor") ?? 52)));
         const doubleChanceFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("doubleChanceFloor") ?? 65)));
         const cornersFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("cornersFloor") ?? 70)));
-        const matchThresholds = { winRateFloor, drawRateCeil, over15Floor, matchWinnerFloor, doubleChanceFloor };
+        const matchThresholds = { winRateFloor, drawRateCeil, over25Floor, matchWinnerFloor, doubleChanceFloor };
         const cornerThresholds = { cornersFloor };
 
         const encoder = new TextEncoder();
@@ -256,7 +256,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
               const passedThreshold = predictions
                 .filter((p) => {
                   const c = Number(p.confidence);
-                  if (p.prediction_type === "over_1_5_goals") return c >= over15Floor;
+                  if (p.prediction_type === "over_2_5_goals") return c >= over25Floor;
                   if (p.prediction_type === "match_winner") return c >= matchWinnerFloor;
                   return meetsConfidenceThreshold(p.prediction_type, c);
                 })
@@ -327,7 +327,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   predictions_generated: finalPreds.length,
                   avg_confidence: Math.round(avg * 100) / 100,
                   status: "completed",
-                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount, winRateFloor, drawRateCeil, over15Floor, matchWinnerFloor, doubleChanceFloor, cornersFloor }),
+                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount, winRateFloor, drawRateCeil, over25Floor, matchWinnerFloor, doubleChanceFloor, cornersFloor }),
                 })
                 .select()
                 .single();
