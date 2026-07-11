@@ -316,35 +316,9 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
     });
   }
 
-  const dcConf = Math.round((homeFav ? pH + pD : pA + pD) * 1000) / 10;
-  if (dcConf >= doubleChanceFloor && agree) {
-    out.push({
-      type: "double_chance",
-      selection: homeFav ? "Home or Draw (1X)" : "Draw or Away (X2)",
-      confidence: Math.min(95, dcConf),
-      riskLevel: dcConf >= 78 ? "low" : dcConf >= 70 ? "medium" : "high",
-      reasons: [`Combined blended probability ${dcConf.toFixed(1)}%.`, marketReason, "No direct market price for double chance — EV not computable, confidence only."],
-      stats: { pH, pA, pD, market },
-      // No modelProbability/marketOdds/expectedValue: no real market price exists for this bet type.
-    });
-  }
-
-  // Asian handicap based on blended edge.
-  const edge = Math.abs(pH - pA);
-  if (edge >= 0.18 && agree) {
-    const ahConf = Math.round(Math.min(90, 65 + edge * 100) * 10) / 10;
-    if (ahConf >= 75) {
-      out.push({
-        type: "asian_handicap",
-        selection: homeFav ? "Home -0.25 AH" : "Away -0.25 AH",
-        confidence: ahConf,
-        riskLevel: ahConf >= 82 ? "low" : "medium",
-        reasons: [`Blended probability gap ${(edge * 100).toFixed(0)} pts justifies a quarter-line.`, marketReason, "No direct market price for this handicap line — EV not computable, confidence only."],
-        stats: { edge, pH, pA, market },
-        // No modelProbability/marketOdds/expectedValue: no real market price exists for this line.
-      });
-    }
-  }
+  // Double chance and Asian handicap generation removed — no real market price exists for
+  // either in this API's data, so no genuine EV can ever be computed for them. Keeping the
+  // scanner focused on match_winner and over_1_5_goals, where a real edge can be measured.
 
   // Goals — Poisson on scored/conceded.
   const lamH = (homeAtHome.scoredAvg ?? 0) * 0.65 + (awayAtAway.concededAvg ?? 0) * 0.35;
@@ -419,4 +393,4 @@ export const CONFIDENCE_THRESHOLDS: Record<string, number> = {
 export function meetsConfidenceThreshold(type: string, confidence: number): boolean {
   const t = CONFIDENCE_THRESHOLDS[type] ?? 75;
   return Number(confidence) >= t;
-  }
+}
