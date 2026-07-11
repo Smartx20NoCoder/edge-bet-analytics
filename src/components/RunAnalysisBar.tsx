@@ -15,13 +15,13 @@ const TIMEFRAMES = [
   { hours: 24, label: "Next 24h" },
 ];
 
-// Scanner focuses on match_winner and over_1_5_goals only — the only two bet types with a
+// Scanner focuses on match_winner and over_2_5_goals only — the only two bet types with a
 // real, measurable edge in this API's data. Double chance, Asian handicap and corners were
 // removed: there's no real bookmaker price for any of them to compute EV against.
 const BET_TYPES = [
   { id: "all", label: "All" },
   { id: "match_winner", label: "Match Winner" },
-  { id: "over_1_5_goals", label: "Over 1.5 Goals" },
+  { id: "over_2_5_goals", label: "Over 2.5 Goals" },
 ] as const;
 
 type LogEntry = { kind: "status" | "match" | "match_done" | "match_error" | "done" | "error"; text: string; at: number };
@@ -54,8 +54,8 @@ export function RunAnalysisBar() {
   // filter — has more to work with.
   const [matchWinnerFloor, setMatchWinnerFloor] = useState(48);
   const [matchWinnerBounds, setMatchWinnerBounds] = useState<[number, number]>([45, 75]);
-  const [over15Floor, setOver15Floor] = useState(60);
-  const [over15Bounds, setOver15Bounds] = useState<[number, number]>([50, 95]);
+  const [over25Floor, setOver25Floor] = useState(55);
+  const [over25Bounds, setOver25Bounds] = useState<[number, number]>([40, 90]);
   const [apiKey, setApiKey] = useState<1 | 2>(() => {
     if (typeof window === "undefined") return 1;
     const v = window.localStorage.getItem("betedge.apiKey");
@@ -112,7 +112,7 @@ export function RunAnalysisBar() {
       betType, apiKey: String(apiKey),
       winRateFloor: String(winRateFloor / 100),
       drawRateCeil: String(drawRateCeil / 100),
-      over15Floor: String(over15Floor),
+      over25Floor: String(over25Floor),
       matchWinnerFloor: String(matchWinnerFloor),
     });
     const ctrl = new AbortController();
@@ -272,9 +272,9 @@ export function RunAnalysisBar() {
         <ThresholdField label={`Match Winner Floor: ${matchWinnerFloor}%`}
           value={matchWinnerFloor} bounds={matchWinnerBounds}
           onValueChange={setMatchWinnerFloor} onBoundsChange={setMatchWinnerBounds} />
-        <ThresholdField label={`Over 1.5 Floor: ${over15Floor}%`}
-          value={over15Floor} bounds={over15Bounds}
-          onValueChange={setOver15Floor} onBoundsChange={setOver15Bounds} />
+        <ThresholdField label={`Over 2.5 Floor: ${over25Floor}%`}
+          value={over25Floor} bounds={over25Bounds}
+          onValueChange={setOver25Floor} onBoundsChange={setOver25Bounds} />
         <ThresholdField label={`Team Win Rate Floor: ${winRateFloor}%`}
           value={winRateFloor} bounds={winRateBounds}
           onValueChange={setWinRateFloor} onBoundsChange={setWinRateBounds} />
