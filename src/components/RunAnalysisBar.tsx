@@ -15,14 +15,13 @@ const TIMEFRAMES = [
   { hours: 24, label: "Next 24h" },
 ];
 
+// Scanner focuses on match_winner and over_1_5_goals only — the only two bet types with a
+// real, measurable edge in this API's data. Double chance, Asian handicap and corners were
+// removed: there's no real bookmaker price for any of them to compute EV against.
 const BET_TYPES = [
   { id: "all", label: "All" },
   { id: "match_winner", label: "Match Winner" },
-  { id: "double_chance", label: "Double Chance" },
-  { id: "asian_handicap", label: "Asian Handicap" },
   { id: "over_1_5_goals", label: "Over 1.5 Goals" },
-  { id: "over_7_5_corners", label: "Over 7.5 Corners" },
-  { id: "over_8_5_corners", label: "Over 8.5 Corners" },
 ] as const;
 
 type LogEntry = { kind: "status" | "match" | "match_done" | "match_error" | "done" | "error"; text: string; at: number };
@@ -35,8 +34,11 @@ export function RunAnalysisBar() {
   const [date, setDate] = useState(todayISO());
   const [timeframeHours, setTimeframeHours] = useState(12);
   const [maxMatches, setMaxMatches] = useState(50);
-  const [minOdds, setMinOdds] = useState(1.15);
-  const [maxOdds, setMaxOdds] = useState(5);
+  // Recommended defaults for EV research: widen the odds range rather than narrow it —
+  // very short odds can't carry meaningful EV even when "correct," very long odds are
+  // where model error compounds.
+  const [minOdds, setMinOdds] = useState(1.5);
+  const [maxOdds, setMaxOdds] = useState(6);
   const [oddsBounds, setOddsBounds] = useState<[number, number]>([1, 10]);
   const [trustedOnly, setTrustedOnly] = useState(true);
   const [refresh, setRefresh] = useState(false);
@@ -46,14 +48,14 @@ export function RunAnalysisBar() {
   const [winRateBounds, setWinRateBounds] = useState<[number, number]>([35, 70]);
   const [drawRateCeil, setDrawRateCeil] = useState(35);
   const [drawRateBounds, setDrawRateBounds] = useState<[number, number]>([15, 50]);
-  const [matchWinnerFloor, setMatchWinnerFloor] = useState(52);
+  // Lowered from 52% — this floor filters on confidence (likelihood), not EV (price value).
+  // Raising it just surfaces more "likely" favourites, which are often priced too short to
+  // carry real value. Lowering it lets more candidates through so the EV badge — the real
+  // filter — has more to work with.
+  const [matchWinnerFloor, setMatchWinnerFloor] = useState(48);
   const [matchWinnerBounds, setMatchWinnerBounds] = useState<[number, number]>([45, 75]);
-  const [doubleChanceFloor, setDoubleChanceFloor] = useState(65);
-  const [doubleChanceBounds, setDoubleChanceBounds] = useState<[number, number]>([55, 90]);
   const [over15Floor, setOver15Floor] = useState(60);
   const [over15Bounds, setOver15Bounds] = useState<[number, number]>([50, 95]);
-  const [cornersFloor, setCornersFloor] = useState(70);
-  const [cornersBounds, setCornersBounds] = useState<[number, number]>([55, 95]);
   const [apiKey, setApiKey] = useState<1 | 2>(() => {
     if (typeof window === "undefined") return 1;
     const v = window.localStorage.getItem("betedge.apiKey");
@@ -112,8 +114,6 @@ export function RunAnalysisBar() {
       drawRateCeil: String(drawRateCeil / 100),
       over15Floor: String(over15Floor),
       matchWinnerFloor: String(matchWinnerFloor),
-      doubleChanceFloor: String(doubleChanceFloor),
-      cornersFloor: String(cornersFloor),
     });
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -272,15 +272,9 @@ export function RunAnalysisBar() {
         <ThresholdField label={`Match Winner Floor: ${matchWinnerFloor}%`}
           value={matchWinnerFloor} bounds={matchWinnerBounds}
           onValueChange={setMatchWinnerFloor} onBoundsChange={setMatchWinnerBounds} />
-        <ThresholdField label={`Double Chance Floor: ${doubleChanceFloor}%`}
-          value={doubleChanceFloor} bounds={doubleChanceBounds}
-          onValueChange={setDoubleChanceFloor} onBoundsChange={setDoubleChanceBounds} />
         <ThresholdField label={`Over 1.5 Floor: ${over15Floor}%`}
           value={over15Floor} bounds={over15Bounds}
           onValueChange={setOver15Floor} onBoundsChange={setOver15Bounds} />
-        <ThresholdField label={`Corners Floor (7.5 & 8.5): ${cornersFloor}%`}
-          value={cornersFloor} bounds={cornersBounds}
-          onValueChange={setCornersFloor} onBoundsChange={setCornersBounds} />
         <ThresholdField label={`Team Win Rate Floor: ${winRateFloor}%`}
           value={winRateFloor} bounds={winRateBounds}
           onValueChange={setWinRateFloor} onBoundsChange={setWinRateBounds} />
