@@ -75,13 +75,13 @@ const RunInput = z.object({
   minOdds: z.number().min(1).max(10).optional(), // implied-odds floor (1/p)
   trustedOnly: z.boolean().optional(),
   refresh: z.boolean().optional(), // force re-fetch of analysis cache
-  // Scanner focuses on match_winner and over_1_5_goals only — the only two bet types with
+  // Scanner focuses on match_winner and over_2_5_goals only — the only two bet types with
   // a real, measurable edge available in this API's data (double chance, asian handicap
   // and corners were removed — no genuine market price exists for those to compute EV against).
-  betType: z.enum(["all","match_winner","over_1_5_goals"]).optional(),
+  betType: z.enum(["all","match_winner","over_2_5_goals"]).optional(),
 });
 
-const MATCH_TYPES = new Set(["match_winner","over_1_5_goals"]);
+const MATCH_TYPES = new Set(["match_winner","over_2_5_goals"]);
 
 export const runAnalysis = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RunInput.parse(d ?? {}))
