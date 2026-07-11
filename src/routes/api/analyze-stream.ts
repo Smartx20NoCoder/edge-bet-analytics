@@ -72,11 +72,13 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const minOdds = Number(url.searchParams.get("minOdds") ?? 1);
         const trustedOnly = url.searchParams.get("trustedOnly") !== "false";
         const refresh = url.searchParams.get("refresh") === "true";
-        const VALID_BET_TYPES = ["all","match_winner","double_chance","asian_handicap","over_1_5_goals","over_6_5_corners","over_7_5_corners","over_8_5_corners"] as const;
+        const VALID_BET_TYPES = ["all","match_winner","over_1_5_goals"] as const;
         const rawBet = (url.searchParams.get("betType") ?? "all").toLowerCase();
         const betType = (VALID_BET_TYPES as readonly string[]).includes(rawBet) ? rawBet : "all";
-        // Always run all engines; the betType is only used as an optional cell filter on the client.
-        const runCorners = true;
+        // Corners, double chance and Asian handicap removed from the scanner — no real
+        // market price exists for any of them in this API's data, so no genuine EV can
+        // ever be computed. Focused on match_winner and over_1_5_goals only.
+        const runCorners = false;
         const runMatch = true;
         const apiKeyParam = url.searchParams.get("apiKey");
         const forcedKey: 1 | 2 | null = apiKeyParam === "1" ? 1 : apiKeyParam === "2" ? 2 : null;
@@ -246,14 +248,11 @@ export const Route = createFileRoute("/api/analyze-stream")({
               }
 
               send("status", { message: "Generating final predictions…" });
-              const isCorner = (t: string) => t === "over_6_5_corners" || t === "over_7_5_corners" || t === "over_8_5_corners";
               const passedThreshold = predictions
                 .filter((p) => {
                   const c = Number(p.confidence);
                   if (p.prediction_type === "over_1_5_goals") return c >= over15Floor;
                   if (p.prediction_type === "match_winner") return c >= matchWinnerFloor;
-                  if (p.prediction_type === "double_chance") return c >= doubleChanceFloor;
-                  if (isCorner(p.prediction_type)) return c >= cornersFloor;
                   return meetsConfidenceThreshold(p.prediction_type, c);
                 })
                 .filter((p) => {
