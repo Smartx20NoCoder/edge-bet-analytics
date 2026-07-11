@@ -23,10 +23,9 @@ export type Prediction = {
   ft_status?: string | null;
   is_correct?: boolean | null;
   stats?: any;
-  // Real edge vs the bookmaker's price — only ever populated for match_winner,
-  // where a genuine market price exists in this API's data. Null for every
-  // other bet type (corners, double chance, asian handicap, over 1.5 goals):
-  // there is no real market price to compare against, so no EV is shown for them.
+  // Real edge vs the bookmaker's price — populated for match_winner (when market odds
+  // exist) and for over_2_5_goals (only when the market's own total line is exactly 2.5).
+  // Null for double_chance and asian_handicap: no real market price to compare against.
   market_odds?: number | string | null;
   model_probability?: number | string | null;
   expected_value?: number | string | null;
@@ -50,7 +49,8 @@ const TYPE_LABEL: Record<string, string> = {
   match_winner: "Match Winner",
   double_chance: "Double Chance",
   asian_handicap: "Asian Handicap",
-  over_1_5_goals: "Over 1.5 Goals",
+  over_2_5_goals: "Over 2.5 Goals",
+  over_1_5_goals: "Over 1.5 Goals", // legacy — for picks from before the switch to 2.5.
 };
 
 export function PredictionCard({ p }: { p: Prediction }) {
@@ -124,7 +124,7 @@ export function PredictionCard({ p }: { p: Prediction }) {
 
       {reasons.length > 0 && (
         <ul className="space-y-1.5">
-          {reasons.slice(0, 4).map((r, i) => (
+          {reasons.slice(0, 5).map((r, i) => (
             <li key={i} className="text-xs text-muted-foreground flex gap-2">
               <TrendingUp className="h-3 w-3 mt-0.5 text-neon shrink-0" />
               <span>{r}</span>
