@@ -201,7 +201,12 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     fetched_at: new Date().toISOString(),
                   });
                   const corners = runCorners ? predictCorners(analysis, m.homeId, m.awayId, cornerThresholds) : [];
-                  const matchPreds = runMatch ? predictMatchOutcomes(analysis, m.homeId, m.awayId, matchThresholds) : [];
+                  const matchPredsRaw = runMatch ? predictMatchOutcomes(analysis, m.homeId, m.awayId, matchThresholds) : [];
+                  // Actually respect the selected Bet Type here — previously this only ran as a
+                  // client-side display filter, so a "Match Winner" scan still generated and
+                  // saved Over 1.5 Goals picks (and vice versa) even though the UI implied
+                  // otherwise. Filter to the chosen type before anything gets pushed/saved.
+                  const matchPreds = betType === "all" ? matchPredsRaw : matchPredsRaw.filter((p) => p.type === betType);
                   const collected: any[] = [];
                   for (const c of corners) collected.push({
                     engine: "corners", prediction_type: c.type, selection: c.selection,
