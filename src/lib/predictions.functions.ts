@@ -75,23 +75,25 @@ const RunInput = z.object({
   minOdds: z.number().min(1).max(10).optional(), // implied-odds floor (1/p)
   trustedOnly: z.boolean().optional(),
   refresh: z.boolean().optional(), // force re-fetch of analysis cache
-  betType: z.enum(["all","match_winner","double_chance","asian_handicap","over_1_5_goals","over_6_5_corners","over_7_5_corners","over_8_5_corners"]).optional(),
+  // Scanner focuses on match_winner and over_1_5_goals only — the only two bet types with
+  // a real, measurable edge available in this API's data (double chance, asian handicap
+  // and corners were removed — no genuine market price exists for those to compute EV against).
+  betType: z.enum(["all","match_winner","over_1_5_goals"]).optional(),
 });
 
-const CORNER_TYPES = new Set(["over_6_5_corners","over_7_5_corners","over_8_5_corners"]);
-const MATCH_TYPES = new Set(["match_winner","double_chance","asian_handicap","over_1_5_goals"]);
+const MATCH_TYPES = new Set(["match_winner","over_1_5_goals"]);
 
 export const runAnalysis = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RunInput.parse(d ?? {}))
   .handler(async ({ data }) => {
     const date = data.date ?? new Date().toISOString().slice(0, 10);
-    const timeframeHours = data.timeframeHours ?? 6;
+    const timeframeHours = data.timeframeHours ?? 12;
     const maxMatches = data.maxMatches ?? 15;
     const maxPicks = data.maxPicks ?? 3;
     const minOdds = data.minOdds ?? 1.0;
     const trustedOnly = data.trustedOnly ?? true;
     const betType = data.betType ?? "all";
-    const runCorners = betType === "all" || CORNER_TYPES.has(betType);
+    const runCorners = false; // corners engine removed from the scanner — no EV available for it.
     const runMatch = betType === "all" || MATCH_TYPES.has(betType);
 
     const all = await fetchScheduleByDate(date);
@@ -489,8 +491,18 @@ export const updateResults = createServerFn({ method: "POST" })
     let skipped = 0;
     let noResultFound = 0;
     let totalResults = 0;
+    let failedDates = 0;
     for (const [date, group] of Object.entries(byDate)) {
-      const results = await fetchResultsByDate(date);
+      let results: Awaited<ReturnType<typeof fetchResultsByDate>>;
+      try {
+        results = await fetchResultsByDate(date);
+      } catch (e: any) {
+        // A single date failing (e.g. trial-key date-range limits) shouldn't abort the
+        // whole batch — skip this date's predictions and keep going with the rest.
+        failedDates++;
+        console.warn(`[updateResults] date=${date} fetch failed, skipping: ${e?.message ?? e}`);
+        continue;
+      }
       totalResults += results.length;
       const map = new Map(results.map((r) => [r.matchId, r]));
       console.log(`[updateResults] date=${date} predictions=${group.length} finishedResults=${results.length}`);
@@ -514,8 +526,8 @@ export const updateResults = createServerFn({ method: "POST" })
         updated++;
       }
     }
-    console.log(`[updateResults] analysisId=${data.analysisId} totalPreds=${preds.length} totalFinishedResults=${totalResults} updated=${updated} skipped=${skipped} noResultFound=${noResultFound}`);
-    return { updated, skipped, noResultFound };
+    console.log(`[updateResults] analysisId=${data.analysisId} totalPreds=${preds.length} totalFinishedResults=${totalResults} updated=${updated} skipped=${skipped} noResultFound=${noResultFound} failedDates=${failedDates}`);
+    return { updated, skipped, noResultFound, failedDates };
   });
 
 export const updateAllPendingResults = createServerFn({ method: "POST" })
@@ -540,9 +552,20 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
 
   let updated = 0;
   let stillPending = 0;
+  let failedDates = 0;
   const dates = Object.keys(byDate);
   for (const [date, group] of Object.entries(byDate)) {
-    const results = await fetchResultsByDate(date);
+    let results: Awaited<ReturnType<typeof fetchResultsByDate>>;
+    try {
+      results = await fetchResultsByDate(date);
+    } catch (e: any) {
+      // A single date failing (e.g. trial-key date-range limits, like "Date out of range")
+      // shouldn't abort the whole batch — skip this date and keep going with the rest.
+      failedDates++;
+      console.warn(`[updateAllPendingResults] date=${date} fetch failed, skipping: ${e?.message ?? e}`);
+      stillPending += group.length;
+      continue;
+    }
     const map = new Map(results.map((r) => [r.matchId, r]));
     for (const p of group) {
       const r = map.get(String(p.match_id));
@@ -563,8 +586,8 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
       updated++;
     }
   }
-  console.log(`[updateAllPendingResults] scanned=${preds.length} updated=${updated} stillPending=${stillPending} dates=${dates.length} forcedKey=${forced ?? "auto"}`);
-  return { updated, stillPending, dates: dates.length, totalScanned: preds.length };
+  console.log(`[updateAllPendingResults] scanned=${preds.length} updated=${updated} stillPending=${stillPending} dates=${dates.length} failedDates=${failedDates} forcedKey=${forced ?? "auto"}`);
+  return { updated, stillPending, dates: dates.length, totalScanned: preds.length, failedDates };
   } finally {
     if (forced) setForcedKey(null);
   }
