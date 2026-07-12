@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { fetchMatchAnalysis, fetchScheduleByDate, hasMainOdds, setForcedKey } from "@/lib/isports.server";
+import { fetchMatchAnalysis, fetchScheduleByDate, fetchLiveOdds, setForcedKey } from "@/lib/isports.server";
 import { gradePrediction as _g, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "@/lib/predictions.server";
 
 const BLOCKED_KEYWORDS = [
@@ -274,33 +274,57 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   return Number(b.confidence) - Number(a.confidence);
                 });
 
-              // Bookmaker availability check — one call per unique match, cached + annotated.
-              const oddsByMatch = new Map<string, boolean>();
+              // Fetch real live odds once per unique qualifying match (same call budget as
+              // the old boolean-only check — fetchLiveOdds shares the same /odds/main cache
+              // hasMainOdds used to hit) and use them to compute genuine EV. This is the
+              // actual fix for match_winner/over_2_5_goals EV being missing or, worse,
+              // silently wrong — see predictions.server.ts for why the old /analysis-based
+              // extraction was unreliable.
+              const liveOddsByMatch = new Map<string, Awaited<ReturnType<typeof fetchLiveOdds>>>();
               const uniqueMatchIds = Array.from(new Set(passedThreshold.map((p) => String(p.match_id))));
               for (const mid of uniqueMatchIds) {
-                oddsByMatch.set(mid, await hasMainOdds(mid));
+                liveOddsByMatch.set(mid, await fetchLiveOdds(mid));
               }
               let noOddsCount = 0;
               const finalPreds: any[] = passedThreshold.map((p) => {
-                const ok = oddsByMatch.get(String(p.match_id)) ?? true;
-                if (!ok) noOddsCount++;
-                // If the live odds feed couldn't confirm a real bookmaker price for this match,
-                // the EV number (computed from odds embedded in the /analysis payload, a separate
-                // and less reliable source) isn't trustworthy either — null it out rather than
-                // show a confident edge figure next to a "no odds" warning.
-                if (!ok && p.expected_value != null) {
+                const live = liveOddsByMatch.get(String(p.match_id));
+                const modelProbability = p.model_probability != null ? Number(p.model_probability) : null;
+
+                if (p.prediction_type === "match_winner" && live?.matchWinner && modelProbability != null) {
+                  const realOdds = p.selection === "Home Win" ? live.matchWinner.oH : live.matchWinner.oA;
+                  const ev = Math.round((modelProbability * realOdds - 1) * 10000) / 10000;
                   return {
                     ...p,
-                    market_odds: null,
-                    expected_value: null,
-                    recommendation: `Lean ${p.selection} (${p.confidence}% model confidence, price unconfirmed by live odds feed).`,
-                    stats: { ...(p.stats ?? {}), oddsAvailable: ok },
+                    market_odds: realOdds,
+                    expected_value: ev,
+                    recommendation: `Lean ${p.selection} — ${ev >= 0 ? "+" : ""}${(ev * 100).toFixed(1)}% edge at ${realOdds.toFixed(2)} odds (${live.matchWinner.bookmakers} bookmakers).`,
+                    reasons: [...(Array.isArray(p.reasons) ? p.reasons : []), `Live market: H ${live.matchWinner.oH.toFixed(2)} / D ${live.matchWinner.oD.toFixed(2)} / A ${live.matchWinner.oA.toFixed(2)} (${live.matchWinner.bookmakers} bookmakers).`],
+                    stats: { ...(p.stats ?? {}), oddsAvailable: true },
                   };
                 }
-                return { ...p, stats: { ...(p.stats ?? {}), oddsAvailable: ok } };
+                if (p.prediction_type === "over_2_5_goals" && live?.goals25 && modelProbability != null) {
+                  const ev = Math.round((modelProbability * live.goals25.oOver - 1) * 10000) / 10000;
+                  return {
+                    ...p,
+                    market_odds: live.goals25.oOver,
+                    expected_value: ev,
+                    recommendation: `Lean Over 2.5 Goals — ${ev >= 0 ? "+" : ""}${(ev * 100).toFixed(1)}% edge at ${live.goals25.oOver.toFixed(2)} odds (${live.goals25.bookmakers} bookmakers @ 2.5 line).`,
+                    reasons: [...(Array.isArray(p.reasons) ? p.reasons : []), `Live market @ 2.5 line: Over ${live.goals25.oOver.toFixed(2)} / Under ${live.goals25.oUnder.toFixed(2)} (${live.goals25.bookmakers} bookmakers).`],
+                    stats: { ...(p.stats ?? {}), oddsAvailable: true },
+                  };
+                }
+                // No real live odds found for this pick's market — confidence-only, no EV.
+                noOddsCount++;
+                return {
+                  ...p,
+                  market_odds: null,
+                  expected_value: null,
+                  recommendation: `Lean ${p.selection} (${p.confidence}% model confidence, no live market price found for this bet type/line).`,
+                  stats: { ...(p.stats ?? {}), oddsAvailable: false },
+                };
               });
               if (noOddsCount) {
-                send("status", { message: `Flagged ${noOddsCount} pick(s) with no 1X2 bookmaker odds — verify manually.` });
+                send("status", { message: `${noOddsCount} pick(s) have no confirmed live market price for their exact bet type — confidence only, no EV shown.` });
               }
 
               if (!finalPreds.length) {
