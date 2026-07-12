@@ -226,61 +226,102 @@ export async function fetchScheduleByDate(date: string): Promise<ScheduleMatch[]
     .filter((m: ScheduleMatch) => m.matchId);
 }
 
-/**
- * Check if a match has 1X2 (home/draw/away) odds available from at least 1 bookmaker.
- * Uses /odds/main with a 1h cache. Fails open (returns true) on transport errors so
- * a flaky odds endpoint doesn't wipe out a scan.
- */
-export async function hasMainOdds(matchId: string): Promise<boolean> {
+async function getOddsMainPayload(matchId: string): Promise<any> {
   const cacheKey = `__odds_main_${matchId}`;
-  let payload: any;
   const { data: cached } = await supabaseAdmin
     .from("analysis_cache")
     .select("raw, fetched_at")
     .eq("match_id", cacheKey)
     .maybeSingle();
   if (cached && Date.now() - new Date(cached.fetched_at).getTime() < 60 * 60 * 1000) {
-    payload = cached.raw;
-  } else {
-    try {
-      payload = await get<any>("/odds/main", { matchId });
-      await supabaseAdmin.from("analysis_cache").upsert({
-        match_id: cacheKey,
-        raw: payload,
-        fetched_at: new Date().toISOString(),
-      });
-    } catch (e) {
-      console.warn(`[hasMainOdds] /odds/main failed for ${matchId}, failing open:`, (e as any)?.message);
-      return true;
+    return cached.raw;
+  }
+  try {
+    const payload = await get<any>("/odds/main", { matchId });
+    await supabaseAdmin.from("analysis_cache").upsert({
+      match_id: cacheKey,
+      raw: payload,
+      fetched_at: new Date().toISOString(),
+    });
+    return payload;
+  } catch (e) {
+    console.warn(`[getOddsMainPayload] /odds/main failed for ${matchId}:`, (e as any)?.message);
+    return null;
+  }
+}
+
+/**
+ * Check if a match has real 1X2 odds from at least one bookmaker on /odds/main.
+ * Fails open (returns true) on transport errors so a flaky odds endpoint doesn't wipe
+ * out a scan.
+ */
+export async function hasMainOdds(matchId: string): Promise<boolean> {
+  const payload = await getOddsMainPayload(matchId);
+  if (!payload) return true; // fail open on fetch failure
+  const rows = payload?.data?.europeOdds;
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+function median(nums: number[]): number {
+  const s = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+export type LiveOdds = {
+  matchWinner?: { oH: number; oD: number; oA: number; bookmakers: number };
+  goals25?: { oOver: number; oUnder: number; bookmakers: number };
+};
+
+/**
+ * Real, per-match live bookmaker odds — pulled from /odds/main (same endpoint hasMainOdds
+ * checks), NOT from /analysis. The /analysis payload's homeOdds/awayOdds fields turned out
+ * to be each team's historical per-match odds logs, not the current fixture's live price,
+ * and /analysis carries no matchId to safely match a row to "this" match anyway. This is
+ * the only source of odds trustworthy enough to compute real EV against.
+ *
+ * europeOdds row shape: matchId,companyId,initH,initD,initA,instH,instD,instA,timestamp,bool,int
+ *   — already decimal odds. Uses the *instant* (current) columns, median across bookmakers.
+ * overUnder row shape: matchId,companyId,initTotal,initOver,initUnder,instTotal,instOver,instUnder,timestamp,bool,int
+ *   — prices are Hong Kong format (decimal = HK + 1). Only rows quoting exactly a 2.5 total
+ *   line are used, since comparing our model's "over 2.5" probability against a different
+ *   line's price would be comparing two different bets.
+ */
+export async function fetchLiveOdds(matchId: string): Promise<LiveOdds> {
+  const payload = await getOddsMainPayload(matchId);
+  const result: LiveOdds = {};
+  if (!payload?.data) return result;
+
+  const europeRows: string[] = Array.isArray(payload.data.europeOdds) ? payload.data.europeOdds : [];
+  const hs: number[] = [], ds: number[] = [], as: number[] = [];
+  for (const row of europeRows) {
+    const c = String(row).split(",");
+    const h = Number(c[5]), d = Number(c[6]), a = Number(c[7]);
+    if (Number.isFinite(h) && h >= 1.01 && Number.isFinite(d) && d >= 1.01 && Number.isFinite(a) && a >= 1.01) {
+      hs.push(h); ds.push(d); as.push(a);
     }
   }
-  // Find any bookmaker entry with a 3-tuple of numeric 1X2 odds.
-  const stack: any[] = [payload?.data ?? payload];
-  let depth = 0;
-  while (stack.length && depth < 5000) {
-    depth++;
-    const node = stack.pop();
-    if (node == null) continue;
-    if (Array.isArray(node)) {
-      // Bookmaker rows often look like [companyId, home, draw, away, ...] or nested arrays.
-      if (node.length >= 3) {
-        // Look for 3 finite numbers >= 1.0 in the first 6 entries (handles different orderings).
-        const nums = node.slice(0, 6).map((v) => Number(v)).filter((n) => Number.isFinite(n) && n >= 1.0);
-        if (nums.length >= 3) return true;
-      }
-      for (const item of node) if (item && typeof item === "object") stack.push(item);
-    } else if (typeof node === "object") {
-      // Common shapes: { europeOdds: { [companyId]: [...] } } or { "1x2": {...} }
-      const keys = Object.keys(node);
-      const oddsKey = keys.find((k) => /europe|1x2|main|moneyline|ml/i.test(k));
-      if (oddsKey && node[oddsKey] && typeof node[oddsKey] === "object") {
-        const inner = node[oddsKey];
-        if (Object.keys(inner).length > 0) return true;
-      }
-      for (const k of keys) stack.push(node[k]);
+  // Require at least 2 bookmakers agreeing on usable prices before trusting the median.
+  if (hs.length >= 2) {
+    result.matchWinner = { oH: median(hs), oD: median(ds), oA: median(as), bookmakers: hs.length };
+  }
+
+  const ouRows: string[] = Array.isArray(payload.data.overUnder) ? payload.data.overUnder : [];
+  const overs: number[] = [], unders: number[] = [];
+  for (const row of ouRows) {
+    const c = String(row).split(",");
+    const totalLine = Number(c[5]); // instant total line for this bookmaker
+    if (!Number.isFinite(totalLine) || Math.abs(totalLine - 2.5) > 0.01) continue;
+    const oHk = Number(c[6]), uHk = Number(c[7]);
+    if (Number.isFinite(oHk) && Number.isFinite(uHk)) {
+      overs.push(oHk + 1);
+      unders.push(uHk + 1);
     }
   }
-  return false;
+  if (overs.length >= 2) {
+    result.goals25 = { oOver: median(overs), oUnder: median(unders), bookmakers: overs.length };
+  }
+  return result;
 }
 
 /** Match analysis with 12h cache. Refresh forces a re-fetch. */
