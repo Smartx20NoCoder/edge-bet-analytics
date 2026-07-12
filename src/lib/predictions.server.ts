@@ -195,74 +195,14 @@ function poissonP(k: number, lambda: number) {
   return Math.exp(-lambda) * Math.pow(lambda, k) / f;
 }
 
-// Extract fair (overround-removed) market probabilities for H/D/A from the analysis payload.
-function extractMarketProbs(analysis: AnyObj): { pH: number; pD: number; pA: number; oH: number; oD: number; oA: number } | undefined {
-  const d = root(analysis);
-
-  // Try CSV homeOdds / awayOdds rows first (each row is a CSV with columns matching home/away last matches).
-  // Top-level fields can also be a row of [home, draw, away] for the upcoming match.
-  const tryTriple = (h: any, dr: any, a: any) => {
-    const oH = n(h), oD = n(dr), oA = n(a);
-    if (!oH || !oD || !oA || oH < 1.01 || oD < 1.01 || oA < 1.01) return undefined;
-    const iH = 1 / oH, iD = 1 / oD, iA = 1 / oA;
-    const s = iH + iD + iA;
-    return { pH: iH / s, pD: iD / s, pA: iA / s, oH, oD, oA };
-  };
-
-  // Direct top-level fields some payloads expose.
-  const direct = tryTriple(d.homeOdds, d.drawOdds, d.awayOdds)
-    ?? tryTriple(d.oddsHome, d.oddsDraw, d.oddsAway);
-  if (direct) return direct;
-
-  // Pull pre-match odds from any *LastMatches CSV row whose matchId matches d.matchId, else fall back
-  // to averaging the most recent row instant odds. Most reliable: the analysis CSV column layout has
-  // initialHome/Draw/Away at COL.initialHome..initialAway.
-  const allRows: Row[] = [
-    ...parseRows(d.homeLastMatches),
-    ...parseRows(d.awayLastMatches),
-    ...parseRows(d.headToHead),
-  ];
-  const targetId = d.matchId ? String(d.matchId) : undefined;
-  for (const r of allRows) {
-    if (targetId && r[COL.matchId] !== targetId) continue;
-    const t = tryTriple(r[COL.initialHome], r[COL.initialDraw], r[COL.initialAway])
-      ?? tryTriple(r[COL.instantHome], r[COL.instantDraw], r[COL.instantAway]);
-    if (t) return t;
-  }
-  return undefined;
-}
-
-// Extract fair (overround-removed) market probabilities for the goals Over/Under market.
-// Only trust this when the market's own total line is 2.5 — comparing our Poisson model's
-// P(over 2.5) against a bookmaker's price for a different line (2.25, 2.75, 3, etc.) would
-// be comparing two different bets and produce a meaningless EV number.
-function extractGoalsMarketProbs(analysis: AnyObj): { totalLine: number; oOver: number; oUnder: number; pOver: number; pUnder: number } | undefined {
-  const d = root(analysis);
-  const tryPair = (over: any, total: any, under: any) => {
-    const oOver = n(over), totalLine = n(total), oUnder = n(under);
-    if (!oOver || !oUnder || totalLine === undefined || oOver < 1.01 || oUnder < 1.01) return undefined;
-    const iOver = 1 / oOver, iUnder = 1 / oUnder;
-    const s = iOver + iUnder;
-    return { totalLine, oOver, oUnder, pOver: iOver / s, pUnder: iUnder / s };
-  };
-
-  const direct = tryPair(d.overOdds, d.totalGoals ?? d.total, d.underOdds);
-  if (direct) return direct;
-
-  const allRows: Row[] = [
-    ...parseRows(d.homeLastMatches),
-    ...parseRows(d.awayLastMatches),
-    ...parseRows(d.headToHead),
-  ];
-  const targetId = d.matchId ? String(d.matchId) : undefined;
-  for (const r of allRows) {
-    if (targetId && r[COL.matchId] !== targetId) continue;
-    const t = tryPair(r[COL.initialOver], r[COL.initialTotal], r[COL.initialUnder])
-      ?? tryPair(r[COL.instantOver], r[COL.instantTotal], r[COL.instantUnder]);
-    if (t) return t;
-  }
-  return undefined;
-}
+// NOTE: market-odds extraction used to live here, reading from the /analysis payload's
+// homeOdds/awayOdds fields and CSV rows. That was wrong on inspection of real cached data:
+// /analysis carries no matchId to safely match a row to "this" fixture, and homeOdds/awayOdds
+// turned out to be each team's historical per-match odds logs, not a live price for the
+// upcoming match. Real, trustworthy live odds now come from /odds/main via
+// isports.server.ts's fetchLiveOdds() — fetched once per qualifying match, after threshold
+// filtering, and passed in below. This function only ever computes pure model probability;
+// EV is attached by the caller once real odds are available.
 
 export type MatchThresholds = {
   winRateFloor?: number;       // 0..1, default 0.45
@@ -288,45 +228,30 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
   // Require at least 6 games of seasonal data per side before firing.
   if (homeAtHome.count < 6 || awayAtAway.count < 6) return [];
 
-  // Model probabilities.
+  // Model probabilities. This is now the ONLY input to confidence — no market blend, since
+  // the only "market" data available at this stage was proven unreliable (see note above).
+  // Real market data gets attached by the caller, post-filter, from a trustworthy source.
   let mH = 0.6 * homeAtHome.winRate + 0.4 * (1 - awayAtAway.winRate - awayAtAway.drawRate);
   let mA = 0.6 * awayAtAway.winRate + 0.4 * (1 - homeAtHome.winRate - homeAtHome.drawRate);
   let mD = 0.5 * (homeAtHome.drawRate + awayAtAway.drawRate);
   mH = Math.max(0.01, mH); mA = Math.max(0.01, mA); mD = Math.max(0.01, mD);
   const mTot = mH + mA + mD;
   mH /= mTot; mA /= mTot; mD /= mTot;
-
-  // Market probabilities (overround-removed).
-  const market = extractMarketProbs(analysis);
-  const blendW = market ? 0.45 : 0;
-  const pH = (1 - blendW) * mH + blendW * (market?.pH ?? 0);
-  const pA = (1 - blendW) * mA + blendW * (market?.pA ?? 0);
-  const pD = (1 - blendW) * mD + blendW * (market?.pD ?? 0);
+  const pH = mH, pA = mA, pD = mD;
 
   const out: MatchPrediction[] = [];
   const homeFav = pH >= pA;
-  const modelHomeFav = mH >= mA;
-  const marketHomeFav = market ? market.pH >= market.pA : homeFav;
-  const agree = !market || modelHomeFav === marketHomeFav;
 
-  const marketReason = market
-    ? `Market odds H ${market.oH.toFixed(2)} / D ${market.oD.toFixed(2)} / A ${market.oA.toFixed(2)} → fair P ${(market.pH*100).toFixed(0)}/${(market.pD*100).toFixed(0)}/${(market.pA*100).toFixed(0)}%.`
-    : "No bookie odds available — model-only.";
-
-  // Match winner threshold (default 52%) — keep market sanity check.
-  const rawWinnerConf = Math.round(Math.max(pH, pA) * 1000) / 10;
-  const winnerConf = agree ? rawWinnerConf : Math.max(0, Math.round((rawWinnerConf - 5) * 10) / 10);
+  // Match winner threshold (default 52%).
+  const winnerConf = Math.round(Math.max(pH, pA) * 1000) / 10;
   const selection = homeFav ? "Home Win" : "Away Win";
   const winnerRecord = homeFav ? homeAtHome : awayAtAway;
   const winnerRecordOk = winnerRecord.winRate >= winRateFloor && winnerRecord.drawRate <= drawRateCeil;
   if (winnerConf >= matchWinnerFloor && winnerRecordOk) {
-    // Unblended model probability + real market odds, kept separate from "confidence"
-    // (which is blended) so EV isn't graded partly against itself.
+    // Pure model probability, saved as-is — EV gets computed by the caller once real
+    // live odds are fetched (post-threshold-filter, to avoid an extra API call per
+    // candidate match that might not even qualify).
     const modelProbability = homeFav ? mH : mA;
-    const marketOdds = market ? (homeFav ? market.oH : market.oA) : undefined;
-    const expectedValue = marketOdds !== undefined
-      ? Math.round((modelProbability * marketOdds - 1) * 10000) / 10000
-      : undefined;
     out.push({
       type: "match_winner",
       selection,
@@ -335,16 +260,12 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
       reasons: [
         `Home @ home: ${(homeAtHome.winRate * 100).toFixed(0)}% W / ${(homeAtHome.drawRate * 100).toFixed(0)}% D (${homeAtHome.count} g).`,
         `Away @ away: ${(awayAtAway.winRate * 100).toFixed(0)}% W / ${(awayAtAway.drawRate * 100).toFixed(0)}% D (${awayAtAway.count} g).`,
-        marketReason,
-        agree ? "Model and market agree on the favourite." : "⚠️ Model and market disagree — confidence penalised by 5 pts.",
-        expectedValue !== undefined
-          ? `EV = (${(modelProbability * 100).toFixed(1)}% model prob × ${marketOdds!.toFixed(2)} odds) − 1 = ${(expectedValue * 100).toFixed(1)}%.`
-          : "No market odds — EV not computable.",
+        `Model probability H ${(mH*100).toFixed(0)}% / D ${(mD*100).toFixed(0)}% / A ${(mA*100).toFixed(0)}% (no market blend).`,
+        "Live odds checked after filtering — see EV badge if a real market price was found.",
       ],
-      stats: { pH, pA, pD, model: { mH, mD, mA }, market, agree },
+      stats: { pH, pA, pD, model: { mH, mD, mA } },
       modelProbability,
-      marketOdds,
-      expectedValue,
+      // marketOdds/expectedValue intentionally left undefined here — attached later.
     });
   }
 
@@ -367,18 +288,10 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
     const pOver25 = Math.max(0, 1 - p00 - p10 - p01 - p20 - p11 - p02);
     const ov25 = Math.round(pOver25 * 1000) / 10;
     if (ov25 >= over25Floor) {
-      const goalsMarket = extractGoalsMarketProbs(analysis);
-      const lineMatches = goalsMarket && Math.abs(goalsMarket.totalLine - 2.5) < 0.01;
-      const modelProbability = pOver25; // unblended Poisson probability, not mixed with market
-      const marketOdds = lineMatches ? goalsMarket!.oOver : undefined;
-      const expectedValue = marketOdds !== undefined
-        ? Math.round((modelProbability * marketOdds - 1) * 10000) / 10000
-        : undefined;
-      const marketReasonGoals = goalsMarket
-        ? (lineMatches
-            ? `Market total 2.5 — Over ${goalsMarket.oOver.toFixed(2)} / Under ${goalsMarket.oUnder.toFixed(2)}.`
-            : `Market total line is ${goalsMarket.totalLine}, not 2.5 — EV not computable for a mismatched line.`)
-        : "No goals-line market price parsed — EV not computable, confidence only.";
+      // Pure Poisson probability, saved as-is — EV gets computed by the caller once real
+      // live odds are fetched (post-threshold-filter), and only when a bookmaker is found
+      // quoting exactly a 2.5 total line.
+      const modelProbability = pOver25;
       out.push({
         type: "over_2_5_goals",
         selection: "Over 2.5 Goals",
@@ -386,15 +299,11 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
         riskLevel: ov25 >= 85 ? "low" : "medium",
         reasons: [
           `λ home ${lamH.toFixed(2)}, λ away ${lamA.toFixed(2)} — Poisson P(3+) = ${ov25.toFixed(1)}%.`,
-          marketReasonGoals,
-          expectedValue !== undefined
-            ? `EV = (${(modelProbability * 100).toFixed(1)}% model prob × ${marketOdds!.toFixed(2)} odds) − 1 = ${(expectedValue * 100).toFixed(1)}%.`
-            : "EV not computable for this pick.",
+          "Live odds checked after filtering — see EV badge if a bookmaker quoting exactly 2.5 was found.",
         ],
-        stats: { lamH, lamA, pOver25, goalsMarket },
+        stats: { lamH, lamA, pOver25 },
         modelProbability,
-        marketOdds,
-        expectedValue,
+        // marketOdds/expectedValue intentionally left undefined here — attached later.
       });
     }
   }
