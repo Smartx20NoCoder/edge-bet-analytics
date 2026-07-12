@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { fetchMatchAnalysis, fetchResultsByDate, fetchScheduleByDate, hasMainOdds, setForcedKey } from "./isports.server";
+import { fetchMatchAnalysis, fetchResultsByDate, fetchScheduleByDate, fetchLiveOdds, setForcedKey } from "./isports.server";
 import { gradePrediction, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "./predictions.server";
 
 const BLOCKED_KEYWORDS = [
@@ -225,32 +225,50 @@ export const runAnalysis = createServerFn({ method: "POST" })
       })
       .slice(0, maxPicks);
 
-    // Bookmaker availability check — annotate, don't drop.
+    // Fetch real live odds once per unique qualifying match and use them to compute
+    // genuine EV — see predictions.server.ts for why the old /analysis-based extraction
+    // was unreliable (no matchId to match rows against, homeOdds/awayOdds were historical
+    // logs, not the current fixture's price).
     let noOddsCount = 0;
     const finalPreds: any[] = [];
+    const liveOddsCache = new Map<string, Awaited<ReturnType<typeof fetchLiveOdds>>>();
     for (const p of passedThreshold) {
-      const ok = await hasMainOdds(String(p.match_id));
-      if (!ok) noOddsCount++;
-      // If the live odds feed couldn't confirm a real bookmaker price, the EV number
-      // (computed from odds embedded in the /analysis payload, a separate and less
-      // reliable source) isn't trustworthy either — null it out rather than show a
-      // confident edge figure next to a "no odds" warning.
-      if (!ok && p.expected_value != null) {
+      const mid = String(p.match_id);
+      if (!liveOddsCache.has(mid)) liveOddsCache.set(mid, await fetchLiveOdds(mid));
+      const live = liveOddsCache.get(mid);
+      const modelProbability = p.model_probability != null ? Number(p.model_probability) : null;
+
+      if (p.prediction_type === "match_winner" && live?.matchWinner && modelProbability != null) {
+        const realOdds = p.selection === "Home Win" ? live.matchWinner.oH : live.matchWinner.oA;
+        const ev = Math.round((modelProbability * realOdds - 1) * 10000) / 10000;
+        finalPreds.push({
+          ...p,
+          market_odds: realOdds,
+          expected_value: ev,
+          recommendation: `Lean ${p.selection} — ${ev >= 0 ? "+" : ""}${(ev * 100).toFixed(1)}% edge at ${realOdds.toFixed(2)} odds (${live.matchWinner.bookmakers} bookmakers).`,
+          stats: { ...(p.stats ?? {}), oddsAvailable: true },
+        });
+      } else if (p.prediction_type === "over_2_5_goals" && live?.goals25 && modelProbability != null) {
+        const ev = Math.round((modelProbability * live.goals25.oOver - 1) * 10000) / 10000;
+        finalPreds.push({
+          ...p,
+          market_odds: live.goals25.oOver,
+          expected_value: ev,
+          recommendation: `Lean Over 2.5 Goals — ${ev >= 0 ? "+" : ""}${(ev * 100).toFixed(1)}% edge at ${live.goals25.oOver.toFixed(2)} odds (${live.goals25.bookmakers} bookmakers @ 2.5 line).`,
+          stats: { ...(p.stats ?? {}), oddsAvailable: true },
+        });
+      } else {
+        noOddsCount++;
         finalPreds.push({
           ...p,
           market_odds: null,
           expected_value: null,
-          recommendation: `Lean ${p.selection} (${p.confidence}% model confidence, price unconfirmed by live odds feed).`,
-          stats: { ...(p.stats ?? {}), oddsAvailable: ok },
-        });
-      } else {
-        finalPreds.push({
-          ...p,
-          stats: { ...(p.stats ?? {}), oddsAvailable: ok },
+          recommendation: `Lean ${p.selection} (${p.confidence}% model confidence, no live market price found for this bet type/line).`,
+          stats: { ...(p.stats ?? {}), oddsAvailable: false },
         });
       }
     }
-    if (noOddsCount) console.log(`[runAnalysis] flagged ${noOddsCount} picks with no 1X2 bookmaker odds`);
+    if (noOddsCount) console.log(`[runAnalysis] ${noOddsCount} picks have no confirmed live market price for their exact bet type`);
     
 
     // Skip saving empty scans entirely.
