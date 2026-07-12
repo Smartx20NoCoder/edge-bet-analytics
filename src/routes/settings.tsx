@@ -109,8 +109,8 @@ function Settings() {
 
       <div className="glass rounded-xl p-6 space-y-2 text-sm">
         <h2 className="text-sm uppercase tracking-widest text-muted-foreground">Engines</h2>
-        <p><span className="text-gold font-semibold">Match Outcome Engine</span> — Match Winner and Over 2.5 Goals only. Match Winner combines form, scoring rates and a market-probability blend; Over 2.5 uses a Poisson goal model. Double chance, Asian handicap and corners were removed — no real market price exists for those bet types in this API's data, so no genuine EV could ever be computed for them.</p>
-        <p><span className="text-neon font-semibold">Expected Value</span> — computed for Match Winner picks (always, when market odds exist) and for Over 2.5 Goals picks (only when the market's own total line is exactly 2.5 — a different line, like 2.25 or 2.75, isn't a fair comparison to our model's "over 2.5" probability, so EV is left blank rather than approximated). "No Odds" picks also show no EV, even if one was computed internally — an unconfirmed price isn't a trustworthy edge.</p>
+        <p><span className="text-gold font-semibold">Match Outcome Engine</span> — Match Winner and Over 2.5 Goals only. Both are pure statistical models (team form/scoring rates for Match Winner, a Poisson goal model for Over 2.5) with no odds mixed into the confidence number. Double chance, Asian handicap and corners were removed entirely — no real market price exists for those in this API's data.</p>
+        <p><span className="text-neon font-semibold">Expected Value</span> — computed after filtering, from real per-match bookmaker odds (/odds/main, median across bookmakers), not estimated from historical data. Match Winner gets EV whenever live 1X2 prices are found; Over 2.5 only when a bookmaker is quoting exactly a 2.5 total line. No match/reliable price found → confidence only, no EV shown, rather than a guessed number.</p>
       </div>
 
       <div className="glass rounded-xl p-6 text-xs text-muted-foreground">
