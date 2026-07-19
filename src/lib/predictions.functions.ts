@@ -318,13 +318,21 @@ export const runAnalysis = createServerFn({ method: "POST" })
   });
 
 export const getAnalyses = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => z.object({ engine: z.enum(["corners", "match"]).optional() }).parse(d ?? {}))
+  .inputValidator((d: unknown) => z.object({
+    engine: z.enum(["corners", "match"]).optional(),
+    page: z.number().int().min(1).optional(),
+    pageSize: z.union([z.literal(50), z.literal(100)]).optional(),
+  }).parse(d ?? {}))
   .handler(async ({ data }) => {
-    const { data: rows, error } = await supabaseAdmin
+    const page = data.page ?? 1;
+    const pageSize = data.pageSize ?? 50;
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+    const { data: rows, error, count } = await supabaseAdmin
       .from("analyses")
-      .select("*")
+      .select("*", { count: "exact" })
       .order("created_at", { ascending: false })
-      .limit(100);
+      .range(from, to);
     if (error) throw new Error(error.message);
     let analyses: any[] = (rows ?? []).map((a: any) => {
       let leagueScope: "major" | "all" | null = null;
@@ -378,7 +386,8 @@ export const getAnalyses = createServerFn({ method: "POST" })
         });
       }
     }
-    return { analyses };
+    const totalCount = count ?? 0;
+    return { analyses, page, pageSize, totalCount, totalPages: Math.max(1, Math.ceil(totalCount / pageSize)) };
   });
 
 export const getPredictions = createServerFn({ method: "POST" })
