@@ -322,17 +322,23 @@ export const getAnalyses = createServerFn({ method: "POST" })
     engine: z.enum(["corners", "match"]).optional(),
     page: z.number().int().min(1).optional(),
     pageSize: z.union([z.literal(50), z.literal(100)]).optional(),
+    // Inclusive date range on scan creation time, YYYY-MM-DD in the user's local time —
+    // converted to a UTC timestamp range here.
+    fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   }).parse(d ?? {}))
   .handler(async ({ data }) => {
     const page = data.page ?? 1;
     const pageSize = data.pageSize ?? 50;
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
-    const { data: rows, error, count } = await supabaseAdmin
+    let query = supabaseAdmin
       .from("analyses")
       .select("*", { count: "exact" })
-      .order("created_at", { ascending: false })
-      .range(from, to);
+      .order("created_at", { ascending: false });
+    if (data.fromDate) query = query.gte("created_at", `${data.fromDate}T00:00:00.000Z`);
+    if (data.toDate) query = query.lte("created_at", `${data.toDate}T23:59:59.999Z`);
+    const { data: rows, error, count } = await query.range(from, to);
     if (error) throw new Error(error.message);
     let analyses: any[] = (rows ?? []).map((a: any) => {
       let leagueScope: "major" | "all" | null = null;
