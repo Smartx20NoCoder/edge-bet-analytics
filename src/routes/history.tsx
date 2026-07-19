@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getAnalyses, getPredictions, updateAllPendingResults } from "@/lib/predictions.functions";
-import { useState, useMemo } from "react";
-import { ChevronDown, ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
+import { useState } from "react";
+import { ChevronDown, ChevronLeft, ChevronRight, Loader2, RefreshCw } from "lucide-react";
 import { PredictionCard, type Prediction } from "@/components/PredictionCard";
 import { ScanScorecard } from "@/components/ScanScorecard";
 import { LeagueScopeBadge } from "@/components/LeagueScopeBadge";
@@ -45,14 +45,20 @@ const TYPE_FILTERS = [
   { id: "over_2_5_goals", label: "Over 2.5" },
 ];
 
+const PAGE_SIZES = [50, 100] as const;
+
 function HistoryPage() {
   const fa = useServerFn(getAnalyses);
   const fp = useServerFn(getPredictions);
   const updateAll = useServerFn(updateAllPendingResults);
   const qc = useQueryClient();
-  const aQ = useQuery({ queryKey: ["analyses"], queryFn: () => fa() });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<50 | 100>(50);
+  const aQ = useQuery({
+    queryKey: ["analyses", page, pageSize],
+    queryFn: () => fa({ data: { page, pageSize } }),
+  });
   const [openId, setOpenId] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
 
   const updateMut = useMutation({
@@ -71,15 +77,14 @@ function HistoryPage() {
     onError: (e: any) => toast.error(e?.message ?? "Update failed"),
   });
 
-  const list = useMemo(() => {
-    const items = aQ.data?.analyses ?? [];
-    if (!search) return items;
-    const s = search.toLowerCase();
-    return items.filter((a: any) =>
-      (a.scan_date ?? "").includes(s) ||
-      new Date(a.created_at).toLocaleString().toLowerCase().includes(s),
-    );
-  }, [aQ.data, search]);
+  const list = aQ.data?.analyses ?? [];
+  const totalPages = aQ.data?.totalPages ?? 1;
+  const totalCount = aQ.data?.totalCount ?? 0;
+
+  const changePageSize = (size: 50 | 100) => {
+    setPageSize(size);
+    setPage(1); // page size change resets to page 1, since offsets no longer line up
+  };
 
   return (
     <section className="mx-auto max-w-7xl px-4 sm:px-6 py-10">
@@ -94,24 +99,22 @@ function HistoryPage() {
         </Button>
       </div>
 
-      <div className="mt-6 glass rounded-xl p-3 flex items-center gap-2">
-        <Search className="h-4 w-4 text-muted-foreground ml-2" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by date (YYYY-MM-DD or formatted)…"
-          aria-label="Search analyses"
-          className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground py-2"
-        />
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-1.5">
+      <div className="mt-4 flex flex-wrap items-center gap-1.5">
         {TYPE_FILTERS.map((f) => (
           <button key={f.id} onClick={() => setTypeFilter(f.id)}
             className={`px-3 h-8 rounded-md text-xs border ${typeFilter === f.id ? "bg-neon/15 border-neon/40 text-neon" : "border-border text-muted-foreground hover:text-foreground"}`}>
             {f.label}
           </button>
         ))}
+        <div className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span>Per page:</span>
+          {PAGE_SIZES.map((s) => (
+            <button key={s} onClick={() => changePageSize(s)}
+              className={`px-2.5 h-8 rounded-md border ${pageSize === s ? "bg-neon/15 border-neon/40 text-neon" : "border-border hover:text-foreground"}`}>
+              {s}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="mt-6 space-y-2">
@@ -130,6 +133,22 @@ function HistoryPage() {
           />
         ))}
       </div>
+
+      {totalCount > 0 && (
+        <div className="mt-6 flex items-center justify-between gap-3 flex-wrap">
+          <span className="text-xs text-muted-foreground">
+            Page {page} of {totalPages} · {totalCount} scan{totalCount === 1 ? "" : "s"} total
+          </span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+              <ChevronLeft className="h-4 w-4" /> Previous
+            </Button>
+            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+              Next <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
