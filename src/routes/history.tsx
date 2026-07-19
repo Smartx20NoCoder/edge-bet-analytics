@@ -47,6 +47,25 @@ const TYPE_FILTERS = [
 
 const PAGE_SIZES = [50, 100] as const;
 
+const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+// Build "last 12 months" options as {label, from, to} — from/to are YYYY-MM-DD strings
+// covering the full calendar month, computed in local time.
+function buildMonthOptions() {
+  const opts: { label: string; from: string; to: string }[] = [];
+  const now = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const y = d.getFullYear(), m = d.getMonth();
+    const first = new Date(y, m, 1);
+    const last = new Date(y, m + 1, 0);
+    const fmt = (x: Date) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+    opts.push({ label: `${MONTH_NAMES[m]} ${y}`, from: fmt(first), to: fmt(last) });
+  }
+  return opts;
+}
+const MONTH_OPTIONS = buildMonthOptions();
+
 function HistoryPage() {
   const fa = useServerFn(getAnalyses);
   const fp = useServerFn(getPredictions);
@@ -54,12 +73,26 @@ function HistoryPage() {
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<50 | 100>(50);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [selectedMonth, setSelectedMonth] = useState(""); // empty = "All time" / custom range
   const aQ = useQuery({
-    queryKey: ["analyses", page, pageSize],
-    queryFn: () => fa({ data: { page, pageSize } }),
+    queryKey: ["analyses", page, pageSize, fromDate, toDate],
+    queryFn: () => fa({ data: { page, pageSize, fromDate: fromDate || undefined, toDate: toDate || undefined } }),
   });
   const [openId, setOpenId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState("all");
+
+  const pickMonth = (label: string) => {
+    setSelectedMonth(label);
+    setPage(1);
+    if (!label) { setFromDate(""); setToDate(""); return; }
+    const m = MONTH_OPTIONS.find((o) => o.label === label);
+    if (m) { setFromDate(m.from); setToDate(m.to); }
+  };
+  const changeFrom = (v: string) => { setFromDate(v); setSelectedMonth(""); setPage(1); };
+  const changeTo = (v: string) => { setToDate(v); setSelectedMonth(""); setPage(1); };
+  const clearDates = () => { setFromDate(""); setToDate(""); setSelectedMonth(""); setPage(1); };
 
   const updateMut = useMutation({
     mutationFn: () => {
@@ -115,6 +148,43 @@ function HistoryPage() {
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="mt-3 glass rounded-xl p-3 flex flex-wrap items-end gap-3">
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Month</label>
+          <select
+            value={selectedMonth}
+            onChange={(e) => pickMonth(e.target.value)}
+            className="h-9 rounded-md bg-secondary border border-border px-2 text-sm"
+          >
+            <option value="">All time</option>
+            {MONTH_OPTIONS.map((m) => (
+              <option key={m.label} value={m.label}>{m.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-muted-foreground mb-1">From</label>
+          <input
+            type="date"
+            value={fromDate}
+            onChange={(e) => changeFrom(e.target.value)}
+            className="h-9 rounded-md bg-secondary border border-border px-2 text-sm font-mono"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-muted-foreground mb-1">To</label>
+          <input
+            type="date"
+            value={toDate}
+            onChange={(e) => changeTo(e.target.value)}
+            className="h-9 rounded-md bg-secondary border border-border px-2 text-sm font-mono"
+          />
+        </div>
+        {(fromDate || toDate || selectedMonth) && (
+          <Button variant="outline" size="sm" onClick={clearDates}>Clear</Button>
+        )}
       </div>
 
       <div className="mt-6 space-y-2">
