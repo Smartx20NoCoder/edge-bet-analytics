@@ -1,11 +1,9 @@
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
-import { Activity, CornerDownRight, History, LayoutDashboard, Settings, Trophy } from "lucide-react";
+import { Activity, History, LayoutDashboard, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { to: "/", label: "Dashboard", Icon: LayoutDashboard },
-  { to: "/corners", label: "Corners", Icon: CornerDownRight },
-  { to: "/matches", label: "Match Outcomes", Icon: Trophy },
   { to: "/history", label: "History", Icon: History },
   { to: "/settings", label: "Settings", Icon: Settings },
 ] as const;
