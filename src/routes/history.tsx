@@ -45,6 +45,25 @@ const TYPE_FILTERS = [
   { id: "over_2_5_goals", label: "Over 2.5" },
 ];
 
+const EV_FILTERS = [
+  { id: "all", label: "All EV" },
+  { id: "positive", label: "Positive EV" },
+  { id: "negative", label: "Negative EV" },
+  { id: "20plus", label: "+20% EV" },
+  { id: "no_ev", label: "No EV" },
+];
+
+function matchesEvFilter(p: Prediction, evFilter: string): boolean {
+  const ev = p.expected_value != null ? Number(p.expected_value) : null;
+  switch (evFilter) {
+    case "positive": return ev != null && ev >= 0;
+    case "negative": return ev != null && ev < 0;
+    case "20plus": return ev != null && ev >= 0.20;
+    case "no_ev": return ev == null;
+    default: return true;
+  }
+}
+
 const PAGE_SIZES = [50, 100] as const;
 
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -82,6 +101,7 @@ function HistoryPage() {
   });
   const [openId, setOpenId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState("all");
+  const [evFilter, setEvFilter] = useState("all");
 
   const pickMonth = (label: string) => {
     setSelectedMonth(label);
@@ -136,6 +156,13 @@ function HistoryPage() {
         {TYPE_FILTERS.map((f) => (
           <button key={f.id} onClick={() => setTypeFilter(f.id)}
             className={`px-3 h-8 rounded-md text-xs border ${typeFilter === f.id ? "bg-neon/15 border-neon/40 text-neon" : "border-border text-muted-foreground hover:text-foreground"}`}>
+            {f.label}
+          </button>
+        ))}
+        <span className="w-px h-6 bg-border mx-1" />
+        {EV_FILTERS.map((f) => (
+          <button key={f.id} onClick={() => setEvFilter(f.id)}
+            className={`px-3 h-8 rounded-md text-xs border ${evFilter === f.id ? "bg-gold/15 border-gold/40 text-gold" : "border-border text-muted-foreground hover:text-foreground"}`}>
             {f.label}
           </button>
         ))}
@@ -200,6 +227,7 @@ function HistoryPage() {
             onToggle={() => setOpenId((o) => (o === a.id ? null : a.id))}
             fp={fp}
             typeFilter={typeFilter}
+            evFilter={evFilter}
           />
         ))}
       </div>
@@ -223,14 +251,16 @@ function HistoryPage() {
   );
 }
 
-function HistoryItem({ a, open, onToggle, fp, typeFilter }: any) {
+function HistoryItem({ a, open, onToggle, fp, typeFilter, evFilter }: any) {
   const q = useQuery({
     queryKey: ["preds", "analysis", a.id],
     queryFn: () => fp({ data: { analysisId: a.id } }),
     enabled: open,
   });
   const allPreds = (q.data?.predictions ?? []) as Prediction[];
-  const preds = typeFilter === "all" ? allPreds : allPreds.filter((p) => p.prediction_type === typeFilter);
+  const preds = allPreds
+    .filter((p) => typeFilter === "all" || p.prediction_type === typeFilter)
+    .filter((p) => matchesEvFilter(p, evFilter));
   return (
     <div className="glass rounded-xl">
       <button onClick={onToggle} className="w-full flex items-center gap-3 p-4 text-left">
