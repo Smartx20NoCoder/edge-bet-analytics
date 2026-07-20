@@ -271,6 +271,11 @@ function median(nums: number[]): number {
 export type LiveOdds = {
   matchWinner?: { oH: number; oD: number; oA: number; bookmakers: number };
   goals25?: { oOver: number; oUnder: number; bookmakers: number };
+  // Real Asian Handicap +0.5 prices — used to hedge a shaky Match Winner pick into a
+  // "win or draw" bet. Only populated when a bookmaker is actually quoting exactly a
+  // 0.5 line on the relevant side; never approximated from other lines.
+  ahHomePlus?: { odds: number; bookmakers: number };
+  ahAwayPlus?: { odds: number; bookmakers: number };
 };
 
 /**
@@ -286,6 +291,12 @@ export type LiveOdds = {
  *   — prices are Hong Kong format (decimal = HK + 1). Only rows quoting exactly a 2.5 total
  *   line are used, since comparing our model's "over 2.5" probability against a different
  *   line's price would be comparing two different bets.
+ * handicap row shape: matchId,companyId,initLine,initHomeHK,initAwayHK,instLine,instHomeHK,instAwayHK,bool,bool,timestamp,bool,int
+ *   — line is stated relative to the home team (positive = home is getting goals, i.e.
+ *   home is the underdog on this line). Prices are Hong Kong format. "Home +0.5" price
+ *   comes from rows where instLine = +0.5 (home price column); "Away +0.5" comes from
+ *   rows where instLine = -0.5 (away price column, since a -0.5 home line is the same
+ *   thing as a +0.5 away line).
  */
 export async function fetchLiveOdds(matchId: string): Promise<LiveOdds> {
   const payload = await getOddsMainPayload(matchId);
@@ -305,6 +316,19 @@ export async function fetchLiveOdds(matchId: string): Promise<LiveOdds> {
   if (hs.length >= 2) {
     result.matchWinner = { oH: median(hs), oD: median(ds), oA: median(as), bookmakers: hs.length };
   }
+
+  const hRows: string[] = Array.isArray(payload.data.handicap) ? payload.data.handicap : [];
+  const homePlus: number[] = [], awayPlus: number[] = [];
+  for (const row of hRows) {
+    const c = String(row).split(",");
+    const line = Number(c[5]);
+    const homeHk = Number(c[6]), awayHk = Number(c[7]);
+    if (!Number.isFinite(line)) continue;
+    if (Math.abs(line - 0.5) < 0.001 && Number.isFinite(homeHk)) homePlus.push(homeHk + 1);
+    if (Math.abs(line + 0.5) < 0.001 && Number.isFinite(awayHk)) awayPlus.push(awayHk + 1);
+  }
+  if (homePlus.length >= 2) result.ahHomePlus = { odds: median(homePlus), bookmakers: homePlus.length };
+  if (awayPlus.length >= 2) result.ahAwayPlus = { odds: median(awayPlus), bookmakers: awayPlus.length };
 
   const ouRows: string[] = Array.isArray(payload.data.overUnder) ? payload.data.overUnder : [];
   const overs: number[] = [], unders: number[] = [];
