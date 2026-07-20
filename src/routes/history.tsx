@@ -95,13 +95,13 @@ function HistoryPage() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [selectedMonth, setSelectedMonth] = useState(""); // empty = "All time" / custom range
-  const aQ = useQuery({
-    queryKey: ["analyses", page, pageSize, fromDate, toDate],
-    queryFn: () => fa({ data: { page, pageSize, fromDate: fromDate || undefined, toDate: toDate || undefined } }),
-  });
   const [openId, setOpenId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState("all");
   const [evFilter, setEvFilter] = useState("all");
+  const aQ = useQuery({
+    queryKey: ["analyses", page, pageSize, fromDate, toDate, typeFilter, evFilter],
+    queryFn: () => fa({ data: { page, pageSize, fromDate: fromDate || undefined, toDate: toDate || undefined, typeFilter: typeFilter as any, evFilter: evFilter as any } }),
+  });
 
   const pickMonth = (label: string) => {
     setSelectedMonth(label);
@@ -261,6 +261,7 @@ function HistoryItem({ a, open, onToggle, fp, typeFilter, evFilter }: any) {
   const preds = allPreds
     .filter((p) => typeFilter === "all" || p.prediction_type === typeFilter)
     .filter((p) => matchesEvFilter(p, evFilter));
+  const filterActive = typeFilter !== "all" || evFilter !== "all";
   return (
     <div className="glass rounded-xl">
       <button onClick={onToggle} className="w-full flex items-center gap-3 p-4 text-left">
@@ -270,6 +271,13 @@ function HistoryItem({ a, open, onToggle, fp, typeFilter, evFilter }: any) {
           <div className="text-xs text-muted-foreground">{a.predictions_generated} pick{a.predictions_generated === 1 ? "" : "s"} · {a.matches_analyzed} match{a.matches_analyzed === 1 ? "" : "es"} analysed</div>
         </div>
         <div className="flex items-center gap-3">
+          {filterActive && (
+            <span className={`inline-flex items-center gap-1 px-2 h-6 rounded-md border text-[11px] font-mono ${
+              a.matching_count > 0 ? "border-gold/40 bg-gold/10 text-gold" : "border-border text-muted-foreground"
+            }`} title="Picks matching the active Bet Type / EV filter">
+              {a.matching_count ?? 0} match{a.matching_count === 1 ? "" : "es"}
+            </span>
+          )}
           <LeagueScopeBadge scope={a.league_scope} />
           <ScanScorecard total={a.score_total ?? a.predictions_generated ?? 0} won={a.score_won ?? 0} pending={a.score_pending ?? 0} />
           <div className="text-right">
