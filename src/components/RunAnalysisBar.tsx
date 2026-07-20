@@ -52,7 +52,7 @@ export function RunAnalysisBar() {
   // Raising it just surfaces more "likely" favourites, which are often priced too short to
   // carry real value. Lowering it lets more candidates through so the EV badge — the real
   // filter — has more to work with.
-  const [matchWinnerFloor, setMatchWinnerFloor] = useState(48);
+  const [matchWinnerFloor, setMatchWinnerFloor] = useState(49);
   const [matchWinnerBounds, setMatchWinnerBounds] = useState<[number, number]>([45, 75]);
   const [over25Floor, setOver25Floor] = useState(55);
   const [over25Bounds, setOver25Bounds] = useState<[number, number]>([40, 90]);
