@@ -326,6 +326,11 @@ export const getAnalyses = createServerFn({ method: "POST" })
     // converted to a UTC timestamp range here.
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    // Same filter vocabulary as the History page's UI filters — used only to compute
+    // matching_count per scan below, so the person can see which scans have a matching
+    // pick without opening every one of them.
+    typeFilter: z.enum(["all", "match_winner", "over_2_5_goals"]).optional(),
+    evFilter: z.enum(["all", "positive", "negative", "20plus", "no_ev"]).optional(),
   }).parse(d ?? {}))
   .handler(async ({ data }) => {
     const page = data.page ?? 1;
@@ -354,20 +359,34 @@ export const getAnalyses = createServerFn({ method: "POST" })
     if (ids.length) {
       let pq = supabaseAdmin
         .from("predictions")
-        .select("analysis_id, confidence, is_correct, engine")
+        .select("analysis_id, confidence, is_correct, engine, prediction_type, expected_value")
         .in("analysis_id", ids);
       if (data.engine) pq = pq.eq("engine", data.engine);
       const { data: preds } = await pq;
-      const counts: Record<string, { n: number; sum: number; won: number; lost: number; pending: number }> = {};
+      const counts: Record<string, { n: number; sum: number; won: number; lost: number; pending: number; matching: number }> = {};
+      const typeFilter = data.typeFilter ?? "all";
+      const evFilter = data.evFilter ?? "all";
+      const matchesFilters = (p: any) => {
+        if (typeFilter !== "all" && p.prediction_type !== typeFilter) return false;
+        const ev = p.expected_value != null ? Number(p.expected_value) : null;
+        switch (evFilter) {
+          case "positive": return ev != null && ev >= 0;
+          case "negative": return ev != null && ev < 0;
+          case "20plus": return ev != null && ev >= 0.20;
+          case "no_ev": return ev == null;
+          default: return true;
+        }
+      };
       for (const p of preds ?? []) {
         const k = (p as any).analysis_id;
-        counts[k] ??= { n: 0, sum: 0, won: 0, lost: 0, pending: 0 };
+        counts[k] ??= { n: 0, sum: 0, won: 0, lost: 0, pending: 0, matching: 0 };
         counts[k].n++;
         counts[k].sum += Number((p as any).confidence);
         const ic = (p as any).is_correct;
         if (ic === true) counts[k].won++;
         else if (ic === false) counts[k].lost++;
         else counts[k].pending++;
+        if (matchesFilters(p)) counts[k].matching++;
       }
       if (data.engine) {
         analyses = analyses
@@ -379,6 +398,7 @@ export const getAnalyses = createServerFn({ method: "POST" })
             score_total: counts[a.id].n,
             score_won: counts[a.id].won,
             score_pending: counts[a.id].pending,
+            matching_count: counts[a.id].matching,
           }));
       } else {
         analyses = analyses.map((a) => {
@@ -388,6 +408,7 @@ export const getAnalyses = createServerFn({ method: "POST" })
             score_total: c?.n ?? 0,
             score_won: c?.won ?? 0,
             score_pending: c?.pending ?? 0,
+            matching_count: c?.matching ?? 0,
           };
         });
       }
