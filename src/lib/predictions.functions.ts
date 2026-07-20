@@ -230,6 +230,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
     // was unreliable (no matchId to match rows against, homeOdds/awayOdds were historical
     // logs, not the current fixture's price).
     let noOddsCount = 0;
+    let hedgedCount = 0;
     const finalPreds: any[] = [];
     const liveOddsCache = new Map<string, Awaited<ReturnType<typeof fetchLiveOdds>>>();
     for (const p of passedThreshold) {
@@ -241,7 +242,38 @@ export const runAnalysis = createServerFn({ method: "POST" })
       if (p.prediction_type === "match_winner" && live?.matchWinner && modelProbability != null) {
         const realOdds = p.selection === "Home Win" ? live.matchWinner.oH : live.matchWinner.oA;
         const ev = Math.round((modelProbability * realOdds - 1) * 10000) / 10000;
-        finalPreds.push({
+        // Hedge rule: confidence < 60% AND EV < +10% → convert to a real AH +0.5 "win or
+        // draw" bet, only when a bookmaker is actually quoting exactly that line.
+        // Hedge rule (two paths, either qualifies):
+        //  1) confidence < 60% AND EV < +10% — a shaky pick either way.
+        //  2) confidence < 60% AND EV >= +10% BUT real odds >= 2.60 — technically "good
+        //     value" on paper, but at long odds and low confidence the variance is high
+        //     enough that hedging still makes sense. Only when a real AH +0.5 line exists.
+        let hedged: any = null;
+        const lowConfidence = Number(p.confidence) < 60;
+        if (lowConfidence && (ev < 0.10 || (ev >= 0.10 && realOdds >= 2.60))) {
+          const ah = p.selection === "Home Win" ? live.ahHomePlus : live.ahAwayPlus;
+          if (ah) {
+            const stats = p.stats ?? {};
+            const pWinOrDraw = p.selection === "Home Win"
+              ? Number(stats.pH ?? 0) + Number(stats.pD ?? 0)
+              : Number(stats.pA ?? 0) + Number(stats.pD ?? 0);
+            const ahEv = Math.round((pWinOrDraw * ah.odds - 1) * 10000) / 10000;
+            hedged = {
+              ...p,
+              prediction_type: "match_winner_hedged",
+              selection: p.selection === "Home Win" ? "Home +0.5 (AH)" : "Away +0.5 (AH)",
+              confidence: Math.round(pWinOrDraw * 1000) / 10,
+              market_odds: ah.odds,
+              model_probability: pWinOrDraw,
+              expected_value: ahEv,
+              recommendation: `Hedged ${p.selection === "Home Win" ? "Home" : "Away"} +0.5 AH — ${ahEv >= 0 ? "+" : ""}${(ahEv * 100).toFixed(1)}% edge at ${ah.odds.toFixed(2)} odds (${ah.bookmakers} bookmakers).`,
+              stats: { ...(p.stats ?? {}), oddsAvailable: true, hedgedFrom: "match_winner", originalConfidence: p.confidence, originalEv: ev },
+            };
+            hedgedCount++;
+          }
+        }
+        finalPreds.push(hedged ?? {
           ...p,
           market_odds: realOdds,
           expected_value: ev,
@@ -269,6 +301,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
       }
     }
     if (noOddsCount) console.log(`[runAnalysis] ${noOddsCount} picks have no confirmed live market price for their exact bet type`);
+    if (hedgedCount) console.log(`[runAnalysis] ${hedgedCount} picks hedged to a real +0.5 Asian Handicap line`);
     
 
     // Skip saving empty scans entirely.
@@ -329,7 +362,7 @@ export const getAnalyses = createServerFn({ method: "POST" })
     // Same filter vocabulary as the History page's UI filters — used only to compute
     // matching_count per scan below, so the person can see which scans have a matching
     // pick without opening every one of them.
-    typeFilter: z.enum(["all", "match_winner", "over_2_5_goals"]).optional(),
+    typeFilter: z.enum(["all", "match_winner", "match_winner_hedged", "over_2_5_goals"]).optional(),
     evFilter: z.enum(["all", "positive", "negative", "20plus", "no_ev"]).optional(),
   }).parse(d ?? {}))
   .handler(async ({ data }) => {
