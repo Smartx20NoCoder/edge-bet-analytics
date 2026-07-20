@@ -286,6 +286,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 liveOddsByMatch.set(mid, await fetchLiveOdds(mid));
               }
               let noOddsCount = 0;
+              let hedgedCount = 0;
               const finalPreds: any[] = passedThreshold.map((p) => {
                 const live = liveOddsByMatch.get(String(p.match_id));
                 const modelProbability = p.model_probability != null ? Number(p.model_probability) : null;
@@ -293,7 +294,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 if (p.prediction_type === "match_winner" && live?.matchWinner && modelProbability != null) {
                   const realOdds = p.selection === "Home Win" ? live.matchWinner.oH : live.matchWinner.oA;
                   const ev = Math.round((modelProbability * realOdds - 1) * 10000) / 10000;
-                  return {
+                  const base = {
                     ...p,
                     market_odds: realOdds,
                     expected_value: ev,
@@ -301,6 +302,45 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     reasons: [...(Array.isArray(p.reasons) ? p.reasons : []), `Live market: H ${live.matchWinner.oH.toFixed(2)} / D ${live.matchWinner.oD.toFixed(2)} / A ${live.matchWinner.oA.toFixed(2)} (${live.matchWinner.bookmakers} bookmakers).`],
                     stats: { ...(p.stats ?? {}), oddsAvailable: true },
                   };
+                  // Hedge rule: confidence < 60% AND EV < +10% → convert to a real AH +0.5
+                  // "win or draw" bet, but only when a bookmaker is actually quoting exactly
+                  // that line — no synthetic/derived price. Confidence ≥60% with EV ≥10%
+                  // (and everything in between) stays as a plain Match Winner pick.
+                  // Hedge rule (two paths, either qualifies):
+                  //  1) confidence < 60% AND EV < +10% — a shaky pick either way.
+                  //  2) confidence < 60% AND EV >= +10% BUT real odds >= 2.60 — technically
+                  //     "good value" on paper, but at long odds and low confidence the
+                  //     variance is high enough that hedging into the safer bet still makes
+                  //     sense. Only applied when a real AH +0.5 line is actually quoted.
+                  const lowConfidence = Number(p.confidence) < 60;
+                  const hedgeEligible = lowConfidence && (ev < 0.10 || (ev >= 0.10 && realOdds >= 2.60));
+                  if (hedgeEligible) {
+                    const ah = p.selection === "Home Win" ? live.ahHomePlus : live.ahAwayPlus;
+                    if (ah) {
+                      const stats = p.stats ?? {};
+                      const pWinOrDraw = p.selection === "Home Win"
+                        ? Number(stats.pH ?? 0) + Number(stats.pD ?? 0)
+                        : Number(stats.pA ?? 0) + Number(stats.pD ?? 0);
+                      const ahEv = Math.round((pWinOrDraw * ah.odds - 1) * 10000) / 10000;
+                      hedgedCount++;
+                      return {
+                        ...base,
+                        prediction_type: "match_winner_hedged",
+                        selection: p.selection === "Home Win" ? "Home +0.5 (AH)" : "Away +0.5 (AH)",
+                        confidence: Math.round(pWinOrDraw * 1000) / 10,
+                        market_odds: ah.odds,
+                        model_probability: pWinOrDraw,
+                        expected_value: ahEv,
+                        recommendation: `Hedged ${p.selection === "Home Win" ? "Home" : "Away"} +0.5 AH — ${ahEv >= 0 ? "+" : ""}${(ahEv * 100).toFixed(1)}% edge at ${ah.odds.toFixed(2)} odds (${ah.bookmakers} bookmakers).`,
+                        reasons: [
+                          ...base.reasons,
+                          `Original Match Winner: ${p.confidence}% confidence, ${(ev * 100).toFixed(1)}% EV, ${realOdds.toFixed(2)} odds — ${ev < 0.10 ? "under 60% confidence / under +10% EV" : "under 60% confidence, long odds (≥2.60) despite positive EV"}, so hedged to a real +0.5 Asian Handicap line (win-or-draw) instead.`,
+                        ],
+                        stats: { ...base.stats, hedgedFrom: "match_winner", originalConfidence: p.confidence, originalEv: ev },
+                      };
+                    }
+                  }
+                  return base;
                 }
                 if (p.prediction_type === "over_2_5_goals" && live?.goals25 && modelProbability != null) {
                   const ev = Math.round((modelProbability * live.goals25.oOver - 1) * 10000) / 10000;
@@ -325,6 +365,9 @@ export const Route = createFileRoute("/api/analyze-stream")({
               });
               if (noOddsCount) {
                 send("status", { message: `${noOddsCount} pick(s) have no confirmed live market price for their exact bet type — confidence only, no EV shown.` });
+              }
+              if (hedgedCount) {
+                send("status", { message: `${hedgedCount} sub-60%-confidence/sub-10%-EV Match Winner pick(s) hedged to a real +0.5 Asian Handicap line.` });
               }
 
               if (!finalPreds.length) {
@@ -351,7 +394,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   predictions_generated: finalPreds.length,
                   avg_confidence: Math.round(avg * 100) / 100,
                   status: "completed",
-                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount, winRateFloor, drawRateCeil, over25Floor, matchWinnerFloor, doubleChanceFloor, cornersFloor }),
+                  notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount, hedgedCount, winRateFloor, drawRateCeil, over25Floor, matchWinnerFloor, doubleChanceFloor, cornersFloor }),
                 })
                 .select()
                 .single();
