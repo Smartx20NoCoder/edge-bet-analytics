@@ -51,6 +51,7 @@ const TYPE_LABEL: Record<string, string> = {
   asian_handicap: "Asian Handicap",
   over_2_5_goals: "Over 2.5 Goals",
   over_1_5_goals: "Over 1.5 Goals", // legacy — for picks from before the switch to 2.5.
+  match_winner_hedged: "Match Winner (Hedged +0.5)",
 };
 
 export function PredictionCard({ p }: { p: Prediction }) {
