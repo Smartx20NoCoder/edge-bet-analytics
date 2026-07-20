@@ -332,6 +332,11 @@ export function gradePrediction(
     if (selection.startsWith("Home")) return hs > as;
     return as > hs;
   }
+  if (predictionType === "match_winner_hedged") {
+    // Real +0.5 Asian Handicap — win or draw for the picked side, no push possible.
+    if (selection.startsWith("Home")) return hs >= as;
+    return as >= hs;
+  }
   if (predictionType === "double_chance") {
     if (selection.includes("1X")) return hs >= as;
     return as >= hs;
