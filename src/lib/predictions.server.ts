@@ -208,7 +208,7 @@ export type MatchThresholds = {
   winRateFloor?: number;       // 0..1, default 0.45
   drawRateCeil?: number;       // 0..1, default 0.35
   over25Floor?: number;        // 0..100, default 55
-  matchWinnerFloor?: number;   // 0..100, default 52
+  matchWinnerFloor?: number;   // 0..100, default 49
   doubleChanceFloor?: number;  // 0..100, default 65
 };
 
@@ -216,7 +216,7 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
   const winRateFloor = thresholds.winRateFloor ?? 0.45;
   const drawRateCeil = thresholds.drawRateCeil ?? 0.35;
   const over25Floor = thresholds.over25Floor ?? 55;
-  const matchWinnerFloor = thresholds.matchWinnerFloor ?? 52;
+  const matchWinnerFloor = thresholds.matchWinnerFloor ?? 49;
   const doubleChanceFloor = thresholds.doubleChanceFloor ?? 65;
   const d = root(analysis);
   const homeRows = parseRows(d.homeLastMatches);
