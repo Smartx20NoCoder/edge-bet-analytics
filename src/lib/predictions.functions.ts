@@ -148,7 +148,11 @@ export const runAnalysis = createServerFn({ method: "POST" })
         });
 
         const corners = runCorners ? predictCorners(analysis, m.homeId, m.awayId) : [];
-        const matchPreds = runMatch ? predictMatchOutcomes(analysis, m.homeId, m.awayId) : [];
+        // Pass league rank straight from the schedule payload — homeRank/awayRank live
+        // there (e.g. "15" or "MEX Lig2C-15"), not in /analysis.
+        const matchPreds = runMatch
+          ? predictMatchOutcomes(analysis, m.homeId, m.awayId, undefined, (m.raw as any)?.homeRank, (m.raw as any)?.awayRank)
+          : [];
 
         const all: any[] = [];
         for (const c of corners) {
