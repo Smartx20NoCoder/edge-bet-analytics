@@ -204,6 +204,89 @@ function poissonP(k: number, lambda: number) {
 // filtering, and passed in below. This function only ever computes pure model probability;
 // EV is attached by the caller once real odds are available.
 
+// ---------------- Recency-weighted form ----------------
+// dataVsRates (the API's own home/away split) is a pre-aggregated black box — no per-game
+// timestamps inside it, so it can't be reweighted. This computes an independent signal
+// straight from the individual per-game CSV rows (which DO have per-game timestamps),
+// weighting recent games higher via exponential decay. Blended into the base model below,
+// never replacing it, and only when enough individual games are actually available.
+function recencyWeightedStats(rows: Row[], teamId: string | undefined, halfLifeGames = 8) {
+  const games: { t: number; my: number; opp: number }[] = [];
+  for (const r of rows) {
+    const hs = n(r[COL.scoreHome]), as = n(r[COL.scoreAway]), t = n(r[COL.matchTime]);
+    if (hs === undefined || as === undefined || t === undefined) continue;
+    const isHome = teamId && r[COL.homeTeamId] === String(teamId);
+    const isAway = teamId && r[COL.awayTeamId] === String(teamId);
+    if (!isHome && !isAway) continue;
+    games.push({ t, my: isHome ? hs : as, opp: isHome ? as : hs });
+  }
+  if (games.length < 6) return undefined; // not enough individual games to trust this signal
+  games.sort((a, b) => b.t - a.t); // most recent first
+
+  let wSum = 0, winW = 0, drawW = 0, loseW = 0, scoredW = 0, concededW = 0;
+  games.forEach((g, i) => {
+    const w = Math.pow(0.5, i / halfLifeGames);
+    wSum += w;
+    if (g.my > g.opp) winW += w;
+    else if (g.my === g.opp) drawW += w;
+    else loseW += w;
+    scoredW += g.my * w;
+    concededW += g.opp * w;
+  });
+  return {
+    count: games.length,
+    winRate: winW / wSum,
+    drawRate: drawW / wSum,
+    loseRate: loseW / wSum,
+    scoredAvg: scoredW / wSum,
+    concededAvg: concededW / wSum,
+  };
+}
+
+// ---------------- Head-to-head ----------------
+// Real prior meetings between these exact two teams. Weight scales with how many meetings
+// exist (capped) — one past meeting shouldn't move the needle much, six or more should.
+function headToHeadStats(rows: Row[], homeId: string | undefined, awayId: string | undefined) {
+  if (!homeId || !awayId) return undefined;
+  let count = 0, homeWin = 0, draw = 0, awayWin = 0, totalGoals = 0;
+  for (const r of rows) {
+    const hs = n(r[COL.scoreHome]), as = n(r[COL.scoreAway]);
+    if (hs === undefined || as === undefined) continue;
+    const rowHomeId = r[COL.homeTeamId], rowAwayId = r[COL.awayTeamId];
+    // This past meeting must be between exactly these two teams, in either venue direction.
+    const currentHomeWasHome = rowHomeId === String(homeId) && rowAwayId === String(awayId);
+    const currentHomeWasAway = rowHomeId === String(awayId) && rowAwayId === String(homeId);
+    if (!currentHomeWasHome && !currentHomeWasAway) continue;
+    count++;
+    totalGoals += hs + as;
+    // Normalize to "current home team"'s perspective regardless of which side they were on.
+    const myScore = currentHomeWasHome ? hs : as;
+    const oppScore = currentHomeWasHome ? as : hs;
+    if (myScore > oppScore) homeWin++;
+    else if (myScore === oppScore) draw++;
+    else awayWin++;
+  }
+  if (!count) return undefined;
+  return {
+    count,
+    homeWinRate: homeWin / count, // "home" = the team that is home in THIS upcoming fixture
+    drawRate: draw / count,
+    awayWinRate: awayWin / count,
+    avgTotalGoals: totalGoals / count,
+  };
+}
+
+// ---------------- League rank ----------------
+// Schedule payload's homeRank/awayRank are sometimes plain numbers ("15") and sometimes
+// league-prefixed ("MEX Lig2C-15", "PER L1A-11") — pull the trailing number either way.
+function parseRank(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const m = String(raw).trim().match(/(\d+)\s*$/);
+  if (!m) return undefined;
+  const v = Number(m[1]);
+  return Number.isFinite(v) ? v : undefined;
+}
+
 export type MatchThresholds = {
   winRateFloor?: number;       // 0..1, default 0.45
   drawRateCeil?: number;       // 0..1, default 0.35
@@ -212,7 +295,14 @@ export type MatchThresholds = {
   doubleChanceFloor?: number;  // 0..100, default 65
 };
 
-export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?: string, thresholds: MatchThresholds = {}): MatchPrediction[] {
+export function predictMatchOutcomes(
+  analysis: AnyObj,
+  homeId?: string,
+  awayId?: string,
+  thresholds: MatchThresholds = {},
+  homeRankRaw?: string,
+  awayRankRaw?: string,
+): MatchPrediction[] {
   const winRateFloor = thresholds.winRateFloor ?? 0.45;
   const drawRateCeil = thresholds.drawRateCeil ?? 0.35;
   const over25Floor = thresholds.over25Floor ?? 55;
@@ -221,6 +311,7 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
   const d = root(analysis);
   const homeRows = parseRows(d.homeLastMatches);
   const awayRows = parseRows(d.awayLastMatches);
+  const h2hRows = parseRows(d.headToHead);
 
   const homeAtHome = dataVsRates(d.homeDataVs, "home") ?? fallbackFromRows(homeRows, homeId);
   const awayAtAway = dataVsRates(d.awayDataVs, "away") ?? fallbackFromRows(awayRows, awayId);
@@ -228,30 +319,67 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
   // Require at least 6 games of seasonal data per side before firing.
   if (homeAtHome.count < 6 || awayAtAway.count < 6) return [];
 
-  // Model probabilities. This is now the ONLY input to confidence — no market blend, since
-  // the only "market" data available at this stage was proven unreliable (see note above).
-  // Real market data gets attached by the caller, post-filter, from a trustworthy source.
+  // ---- Base model (unchanged formula) ----
   let mH = 0.6 * homeAtHome.winRate + 0.4 * (1 - awayAtAway.winRate - awayAtAway.drawRate);
   let mA = 0.6 * awayAtAway.winRate + 0.4 * (1 - homeAtHome.winRate - homeAtHome.drawRate);
   let mD = 0.5 * (homeAtHome.drawRate + awayAtAway.drawRate);
   mH = Math.max(0.01, mH); mA = Math.max(0.01, mA); mD = Math.max(0.01, mD);
   const mTot = mH + mA + mD;
   mH /= mTot; mA /= mTot; mD /= mTot;
-  const pH = mH, pA = mA, pD = mD;
+
+  // ---- Ensemble: blend in recency, H2H, and rank signals, each weighted by how much real
+  // data backs them. This never overrides the base model — it's a weighted average, so a
+  // signal with little/no data behind it just contributes ~0 and the base model dominates. ----
+  const signals: { w: number; H: number; D: number; A: number }[] = [{ w: 1.0, H: mH, D: mD, A: mA }];
+  const reasonsExtra: string[] = [];
+
+  const homeRecency = recencyWeightedStats(homeRows, homeId);
+  const awayRecency = recencyWeightedStats(awayRows, awayId);
+  if (homeRecency && awayRecency) {
+    let rH = 0.6 * homeRecency.winRate + 0.4 * (1 - awayRecency.winRate - awayRecency.drawRate);
+    let rA = 0.6 * awayRecency.winRate + 0.4 * (1 - homeRecency.winRate - homeRecency.drawRate);
+    let rD = 0.5 * (homeRecency.drawRate + awayRecency.drawRate);
+    rH = Math.max(0.01, rH); rA = Math.max(0.01, rA); rD = Math.max(0.01, rD);
+    const rTot = rH + rA + rD;
+    signals.push({ w: 0.35, H: rH / rTot, D: rD / rTot, A: rA / rTot });
+    reasonsExtra.push(`Recency-weighted form (last ${homeRecency.count}/${awayRecency.count} games, recent games weighted higher): H ${(rH/rTot*100).toFixed(0)}% / D ${(rD/rTot*100).toFixed(0)}% / A ${(rA/rTot*100).toFixed(0)}%.`);
+  }
+
+  const h2h = headToHeadStats(h2hRows, homeId, awayId);
+  if (h2h) {
+    const h2hWeight = Math.min(0.30, h2h.count * 0.05);
+    signals.push({ w: h2hWeight, H: h2h.homeWinRate, D: h2h.drawRate, A: h2h.awayWinRate });
+    reasonsExtra.push(`Head-to-head (${h2h.count} past meeting${h2h.count === 1 ? "" : "s"}): ${(h2h.homeWinRate*100).toFixed(0)}% / ${(h2h.drawRate*100).toFixed(0)}% / ${(h2h.awayWinRate*100).toFixed(0)}%, avg ${h2h.avgTotalGoals.toFixed(1)} goals/meeting.`);
+  }
+
+  const homeRank = parseRank(homeRankRaw);
+  const awayRank = parseRank(awayRankRaw);
+  if (homeRank !== undefined && awayRank !== undefined) {
+    const gap = awayRank - homeRank; // positive = home ranked better (lower number = higher table position)
+    const tilt = Math.max(-0.35, Math.min(0.35, gap / 40));
+    const rankPHomeNonDraw = 0.5 + tilt;
+    signals.push({ w: 0.20, H: rankPHomeNonDraw * (1 - mD), D: mD, A: (1 - rankPHomeNonDraw) * (1 - mD) });
+    reasonsExtra.push(`League rank: Home #${homeRank} vs Away #${awayRank}${gap !== 0 ? ` (${gap > 0 ? "home" : "away"} placed higher)` : " (level)"}.`);
+  }
+
+  const totalW = signals.reduce((s, x) => s + x.w, 0);
+  const pH = signals.reduce((s, x) => s + x.w * x.H, 0) / totalW;
+  const pD = signals.reduce((s, x) => s + x.w * x.D, 0) / totalW;
+  const pA = signals.reduce((s, x) => s + x.w * x.A, 0) / totalW;
 
   const out: MatchPrediction[] = [];
   const homeFav = pH >= pA;
 
-  // Match winner threshold (default 52%).
+  // Match winner threshold (default 49%).
   const winnerConf = Math.round(Math.max(pH, pA) * 1000) / 10;
   const selection = homeFav ? "Home Win" : "Away Win";
   const winnerRecord = homeFav ? homeAtHome : awayAtAway;
   const winnerRecordOk = winnerRecord.winRate >= winRateFloor && winnerRecord.drawRate <= drawRateCeil;
   if (winnerConf >= matchWinnerFloor && winnerRecordOk) {
-    // Pure model probability, saved as-is — EV gets computed by the caller once real
+    // Ensemble probability, saved as-is — EV gets computed by the caller once real
     // live odds are fetched (post-threshold-filter, to avoid an extra API call per
     // candidate match that might not even qualify).
-    const modelProbability = homeFav ? mH : mA;
+    const modelProbability = homeFav ? pH : pA;
     out.push({
       type: "match_winner",
       selection,
@@ -260,10 +388,12 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
       reasons: [
         `Home @ home: ${(homeAtHome.winRate * 100).toFixed(0)}% W / ${(homeAtHome.drawRate * 100).toFixed(0)}% D (${homeAtHome.count} g).`,
         `Away @ away: ${(awayAtAway.winRate * 100).toFixed(0)}% W / ${(awayAtAway.drawRate * 100).toFixed(0)}% D (${awayAtAway.count} g).`,
-        `Model probability H ${(mH*100).toFixed(0)}% / D ${(mD*100).toFixed(0)}% / A ${(mA*100).toFixed(0)}% (no market blend).`,
+        `Base model H ${(mH*100).toFixed(0)}% / D ${(mD*100).toFixed(0)}% / A ${(mA*100).toFixed(0)}%.`,
+        ...reasonsExtra,
+        `Ensemble (all signals blended): H ${(pH*100).toFixed(0)}% / D ${(pD*100).toFixed(0)}% / A ${(pA*100).toFixed(0)}%.`,
         "Live odds checked after filtering — see EV badge if a real market price was found.",
       ],
-      stats: { pH, pA, pD, model: { mH, mD, mA } },
+      stats: { pH, pA, pD, base: { mH, mD, mA }, signalsUsed: signals.length },
       modelProbability,
       // marketOdds/expectedValue intentionally left undefined here — attached later.
     });
@@ -271,12 +401,30 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
 
   // Double chance and Asian handicap generation removed — no real market price exists for
   // either in this API's data, so no genuine EV can ever be computed for them. Keeping the
-  // scanner focused on match_winner and over_1_5_goals, where a real edge can be measured.
+  // scanner focused on match_winner and over_2_5_goals, where a real edge can be measured.
 
-  // Goals — Poisson on scored/conceded. Over 2.5 rather than 1.5: 1.5 odds are typically
-  // so short (~1.30-1.50) there's little room for real EV even when the model is right.
-  const lamH = (homeAtHome.scoredAvg ?? 0) * 0.65 + (awayAtAway.concededAvg ?? 0) * 0.35;
-  const lamA = (awayAtAway.scoredAvg ?? 0) * 0.65 + (homeAtHome.concededAvg ?? 0) * 0.35;
+  // Goals — Poisson on scored/conceded, blended with recency-weighted scoring/conceding
+  // and nudged toward this exact matchup's own head-to-head scoring history.
+  let lamH = (homeAtHome.scoredAvg ?? 0) * 0.65 + (awayAtAway.concededAvg ?? 0) * 0.35;
+  let lamA = (awayAtAway.scoredAvg ?? 0) * 0.65 + (homeAtHome.concededAvg ?? 0) * 0.35;
+  const goalsReasonsExtra: string[] = [];
+  if (homeRecency && awayRecency && homeRecency.scoredAvg !== undefined && awayRecency.scoredAvg !== undefined) {
+    const rLamH = homeRecency.scoredAvg * 0.65 + (awayRecency.concededAvg ?? 0) * 0.35;
+    const rLamA = awayRecency.scoredAvg * 0.65 + (homeRecency.concededAvg ?? 0) * 0.35;
+    lamH = 0.65 * lamH + 0.35 * rLamH;
+    lamA = 0.65 * lamA + 0.35 * rLamA;
+    goalsReasonsExtra.push(`Recency-weighted λ: home ${rLamH.toFixed(2)}, away ${rLamA.toFixed(2)} (blended in).`);
+  }
+  if (h2h && h2h.count >= 2) {
+    const h2hGoalsWeight = Math.min(0.25, h2h.count * 0.04);
+    const currentTotal = lamH + lamA;
+    if (currentTotal > 0) {
+      const targetTotal = (1 - h2hGoalsWeight) * currentTotal + h2hGoalsWeight * h2h.avgTotalGoals;
+      const scale = targetTotal / currentTotal;
+      lamH *= scale; lamA *= scale;
+      goalsReasonsExtra.push(`H2H avg ${h2h.avgTotalGoals.toFixed(1)} goals/meeting (${h2h.count} meetings) nudged total λ toward ${targetTotal.toFixed(2)}.`);
+    }
+  }
   if (lamH > 0 && lamA > 0) {
     // P(total <= 2) — every (home goals, away goals) combination summing to 0, 1, or 2.
     const p00 = poissonP(0, lamH) * poissonP(0, lamA);
@@ -288,9 +436,9 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
     const pOver25 = Math.max(0, 1 - p00 - p10 - p01 - p20 - p11 - p02);
     const ov25 = Math.round(pOver25 * 1000) / 10;
     if (ov25 >= over25Floor) {
-      // Pure Poisson probability, saved as-is — EV gets computed by the caller once real
-      // live odds are fetched (post-threshold-filter), and only when a bookmaker is found
-      // quoting exactly a 2.5 total line.
+      // Ensemble Poisson probability, saved as-is — EV gets computed by the caller once
+      // real live odds are fetched (post-threshold-filter), and only when a bookmaker is
+      // found quoting exactly a 2.5 total line.
       const modelProbability = pOver25;
       out.push({
         type: "over_2_5_goals",
@@ -299,6 +447,7 @@ export function predictMatchOutcomes(analysis: AnyObj, homeId?: string, awayId?:
         riskLevel: ov25 >= 85 ? "low" : "medium",
         reasons: [
           `λ home ${lamH.toFixed(2)}, λ away ${lamA.toFixed(2)} — Poisson P(3+) = ${ov25.toFixed(1)}%.`,
+          ...goalsReasonsExtra,
           "Live odds checked after filtering — see EV badge if a bookmaker quoting exactly 2.5 was found.",
         ],
         stats: { lamH, lamA, pOver25 },
