@@ -201,7 +201,11 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     fetched_at: new Date().toISOString(),
                   });
                   const corners = runCorners ? predictCorners(analysis, m.homeId, m.awayId, cornerThresholds) : [];
-                  const matchPredsRaw = runMatch ? predictMatchOutcomes(analysis, m.homeId, m.awayId, matchThresholds) : [];
+                  // Pass league rank straight from the schedule payload — homeRank/awayRank
+                  // live there (e.g. "15" or "MEX Lig2C-15"), not in /analysis.
+                  const matchPredsRaw = runMatch
+                    ? predictMatchOutcomes(analysis, m.homeId, m.awayId, matchThresholds, (m.raw as any)?.homeRank, (m.raw as any)?.awayRank)
+                    : [];
                   // Actually respect the selected Bet Type here — previously this only ran as a
                   // client-side display filter, so a "Match Winner" scan still generated and
                   // saved Over 1.5 Goals picks (and vice versa) even though the UI implied
@@ -302,10 +306,6 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     reasons: [...(Array.isArray(p.reasons) ? p.reasons : []), `Live market: H ${live.matchWinner.oH.toFixed(2)} / D ${live.matchWinner.oD.toFixed(2)} / A ${live.matchWinner.oA.toFixed(2)} (${live.matchWinner.bookmakers} bookmakers).`],
                     stats: { ...(p.stats ?? {}), oddsAvailable: true },
                   };
-                  // Hedge rule: confidence < 60% AND EV < +10% → convert to a real AH +0.5
-                  // "win or draw" bet, but only when a bookmaker is actually quoting exactly
-                  // that line — no synthetic/derived price. Confidence ≥60% with EV ≥10%
-                  // (and everything in between) stays as a plain Match Winner pick.
                   // Hedge rule (two paths, either qualifies):
                   //  1) confidence < 60% AND EV < +10% — a shaky pick either way.
                   //  2) confidence < 60% AND EV >= +10% BUT real odds >= 2.60 — technically
