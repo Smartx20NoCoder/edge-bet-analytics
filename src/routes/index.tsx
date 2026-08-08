@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { RunAnalysisBar } from "@/components/RunAnalysisBar";
+import { DailyPicksPanel } from "@/components/DailyPicksPanel";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -29,6 +30,7 @@ function Dashboard() {
         </div>
         <RunAnalysisBar />
       </section>
+      <DailyPicksPanel />
     </div>
   );
 }
