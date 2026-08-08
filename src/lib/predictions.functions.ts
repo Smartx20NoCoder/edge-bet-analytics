@@ -246,8 +246,6 @@ export const runAnalysis = createServerFn({ method: "POST" })
       if (p.prediction_type === "match_winner" && live?.matchWinner && modelProbability != null) {
         const realOdds = p.selection === "Home Win" ? live.matchWinner.oH : live.matchWinner.oA;
         const ev = Math.round((modelProbability * realOdds - 1) * 10000) / 10000;
-        // Hedge rule: confidence < 60% AND EV < +10% → convert to a real AH +0.5 "win or
-        // draw" bet, only when a bookmaker is actually quoting exactly that line.
         // Hedge rule (two paths, either qualifies):
         //  1) confidence < 60% AND EV < +10% — a shaky pick either way.
         //  2) confidence < 60% AND EV >= +10% BUT real odds >= 2.60 — technically "good
@@ -683,3 +681,89 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
     if (forced) setForcedKey(null);
   }
 });
+
+// ---- Single / Combo of the Day ----
+// Computed live from real saved picks — no separate storage table, no duplicated state.
+// Only ever draws from picks with a real, confirmed market price and non-negative EV
+// (the same discipline used everywhere else in this app). Combo is EXPERIMENTAL and
+// tracked completely separately from the validated single-pick stats — see the historical
+// numbers from this exact test: a daily 3-4 leg Match Winner ACCA went 0/14 winning days
+// despite every leg being individually profitable as a single. 2 legs from different
+// matches is the more defensible starting point, but this is data-gathering, not a
+// recommendation to stake it.
+export const getDailyPicks = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({
+    page: z.number().int().min(1).optional(),
+    pageSize: z.number().int().min(1).max(60).optional(),
+  }).parse(d ?? {}))
+  .handler(async ({ data }) => {
+    const page = data.page ?? 1;
+    const pageSize = data.pageSize ?? 14;
+    const { data: rows, error } = await supabaseAdmin
+      .from("predictions")
+      .select("*")
+      .in("prediction_type", ["match_winner", "over_2_5_goals", "match_winner_hedged"])
+      .not("market_odds", "is", null)
+      .gte("expected_value", 0)
+      .order("created_at", { ascending: false })
+      .limit(3000);
+    if (error) throw new Error(error.message);
+
+    const byDay = new Map<string, any[]>();
+    for (const p of rows ?? []) {
+      const day = new Date(p.created_at).toISOString().slice(0, 10);
+      if (!byDay.has(day)) byDay.set(day, []);
+      byDay.get(day)!.push(p);
+    }
+    const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
+    const pageDays = days.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
+
+    // A ceiling on EV eligibility for Single/Combo selection — not just "highest EV wins".
+    // On a two-outcome market with real bookmaker prices (modest margins), an edge this
+    // large is far more likely to be a thin/noisy probability estimate (e.g. a head-to-head
+    // signal built from only 2 past meetings pulling the number hard) than a genuinely
+    // reliable opportunity. Picks above this are excluded from being selected as the
+    // flagship pick — they still exist and are gradable in History, just not spotlighted
+    // as "best".
+    //
+    // Set from a real backtest across 4 EV bands on graded picks (July 12 onward):
+    //   10-20% EV  (n=41): 53.7% win rate, +3.0% realized ROI
+    //   20-35% EV  (n=27): 48.1% win rate, +6.6% realized ROI
+    //   35-50% EV  (n=6):  50.0% win rate, +22.8% realized ROI  (too small a sample to trust)
+    //   50%+ EV    (n=27): 25.9% win rate, -10.6% realized ROI  (confirmed collapse zone)
+    // 40% sits just above the well-performing 20-35% band, captures a modest slice of the
+    // promising-but-thin 35-50% band, and stays clear of the confirmed 50%+ collapse.
+    const EV_CEILING = 0.40;
+
+    const results = pageDays.map((day) => {
+      const allPicksThatDay = byDay.get(day)!;
+      const picks = allPicksThatDay
+        .filter((p) => Number(p.expected_value) <= EV_CEILING)
+        .sort((a, b) => Number(b.expected_value) - Number(a.expected_value));
+      const excludedOutliers = allPicksThatDay.length - picks.length;
+      const single = picks[0] ?? null;
+
+      // Combo: top 2 legs from DIFFERENT matches, highest EV first.
+      const comboLegs: any[] = [];
+      for (const p of picks) {
+        if (comboLegs.length === 2) break;
+        if (comboLegs.some((l) => l.match_id === p.match_id)) continue;
+        comboLegs.push(p);
+      }
+      let combo: any = null;
+      if (comboLegs.length === 2) {
+        const bothGraded = comboLegs.every((l) => l.is_correct !== null && l.is_correct !== undefined);
+        const won = comboLegs.every((l) => l.is_correct === true);
+        const combinedOdds = comboLegs.reduce((s, l) => s * Number(l.market_odds), 1);
+        combo = {
+          legs: comboLegs,
+          combinedOdds: Math.round(combinedOdds * 100) / 100,
+          isCorrect: bothGraded ? won : null,
+          profit: bothGraded ? Math.round((won ? combinedOdds - 1 : -1) * 100) / 100 : null,
+        };
+      }
+      return { day, single, combo, qualifyingPicksCount: picks.length, excludedOutliers };
+    });
+
+    return { days: results, totalDays: days.length, page, pageSize, totalPages: Math.max(1, Math.ceil(days.length / pageSize)) };
+  });
