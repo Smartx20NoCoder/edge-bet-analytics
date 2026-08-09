@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { fetchMatchAnalysis, fetchScheduleByDate, fetchLiveOdds, setForcedKey } from "@/lib/isports.server";
 import { gradePrediction as _g, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "@/lib/predictions.server";
+import { lockDailyBestPickIfNeeded } from "@/lib/predictions.functions";
 
 const BLOCKED_KEYWORDS = [
   "friendly", "futsal", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women",
@@ -26,24 +27,15 @@ const TRUSTED_LEAGUE_PATTERNS = [
   "mls", "liga mx", "brasileir", "j league", "k league",
   "scottish premiership", "belgian", "swiss super",
 ];
-// Regional/state qualifiers that indicate a lower, non-elite competition even when the
-// name contains a trusted-sounding phrase like "premier league" (e.g. Australian state
-// NPL comps branded "Queensland Premier League", "Victoria Premier League", etc.).
 const MINOR_QUALIFIERS = [
   "queensland", "victoria", "victorian", "new south wales", "western australia",
   "south australia", "tasmania", "northern territory", "capital territory",
   "state league", "npl", "county", "district", "metro",
-  // Australian state-league abbreviations — these are the actual strings that show up
-  // in league names (e.g. "TAS Premier Championship"), not the spelled-out state name.
   "nsw", "vic", "qld", " sa ", " wa ", "tas", "act", " nt ",
 ];
-// A trailing tier number ("... League 2", "... Premier League 3") is a strong signal of a
-// lower division that a loose substring match on "premier league" alone would miss.
 function hasTierNumber(name: string): boolean {
   return /\b[2-9]\b\s*$/.test(name.trim());
 }
-// Women's fixtures aren't reliably flagged by league name alone (e.g. "WK League" doesn't
-// say "women") — the marker is usually on the team names instead ("(W)" suffix, etc.).
 function isWomensFixture(homeName?: string, awayName?: string): boolean {
   const check = (n?: string) => {
     if (!n) return false;
@@ -75,9 +67,6 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const VALID_BET_TYPES = ["all","match_winner","over_2_5_goals"] as const;
         const rawBet = (url.searchParams.get("betType") ?? "all").toLowerCase();
         const betType = (VALID_BET_TYPES as readonly string[]).includes(rawBet) ? rawBet : "all";
-        // Corners, double chance and Asian handicap removed from the scanner — no real
-        // market price exists for any of them in this API's data, so no genuine EV can
-        // ever be computed. Focused on match_winner and over_1_5_goals only.
         const runCorners = false;
         const runMatch = true;
         const apiKeyParam = url.searchParams.get("apiKey");
@@ -143,7 +132,6 @@ export const Route = createFileRoute("/api/analyze-stream")({
 
               const initialCandidates = afterTrusted.sort((a, b) => a.matchTime - b.matchTime).slice(0, maxMatches);
 
-              // Dedup: skip matches already predicted (any market).
               let skippedExisting = 0;
               let candidates = initialCandidates;
               if (initialCandidates.length) {
@@ -201,15 +189,9 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     fetched_at: new Date().toISOString(),
                   });
                   const corners = runCorners ? predictCorners(analysis, m.homeId, m.awayId, cornerThresholds) : [];
-                  // Pass league rank straight from the schedule payload — homeRank/awayRank
-                  // live there (e.g. "15" or "MEX Lig2C-15"), not in /analysis.
                   const matchPredsRaw = runMatch
                     ? predictMatchOutcomes(analysis, m.homeId, m.awayId, matchThresholds, (m.raw as any)?.homeRank, (m.raw as any)?.awayRank)
                     : [];
-                  // Actually respect the selected Bet Type here — previously this only ran as a
-                  // client-side display filter, so a "Match Winner" scan still generated and
-                  // saved Over 1.5 Goals picks (and vice versa) even though the UI implied
-                  // otherwise. Filter to the chosen type before anything gets pushed/saved.
                   const matchPreds = betType === "all" ? matchPredsRaw : matchPredsRaw.filter((p) => p.type === betType);
                   const collected: any[] = [];
                   for (const c of corners) collected.push({
@@ -222,7 +204,6 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     engine: "match", prediction_type: p.type, selection: p.selection,
                     confidence: p.confidence, risk_level: p.riskLevel, reasons: p.reasons,
                     stats: p.stats,
-                    // Only match_winner ever has a real expectedValue — see predictions.server.ts.
                     recommendation: p.expectedValue !== undefined
                       ? `Lean ${p.selection} — ${p.expectedValue >= 0 ? "+" : ""}${(p.expectedValue * 100).toFixed(1)}% edge at ${p.marketOdds!.toFixed(2)} odds.`
                       : `Lean ${p.selection} (${p.confidence}% model confidence, no market price).`,
@@ -230,8 +211,6 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     model_probability: p.modelProbability ?? null,
                     expected_value: p.expectedValue ?? null,
                   });
-                  // Keep ALL qualifying picks across all 4 engines for this match.
-                  // betType is no longer used to restrict storage — clients filter per-cell in the table.
                   let kept = 0;
                   for (const x of collected) {
                     predictions.push({
@@ -269,8 +248,6 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   return implied >= minOdds && implied <= maxOdds;
                 })
                 .sort((a, b) => {
-                  // Real edge (expected_value) first when present — this is what "best value" should
-                  // mean — falling back to confidence for picks with no computable market price.
                   const evA = a.expected_value, evB = b.expected_value;
                   if (evA != null && evB != null) return Number(evB) - Number(evA);
                   if (evA != null) return -1;
@@ -278,12 +255,6 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   return Number(b.confidence) - Number(a.confidence);
                 });
 
-              // Fetch real live odds once per unique qualifying match (same call budget as
-              // the old boolean-only check — fetchLiveOdds shares the same /odds/main cache
-              // hasMainOdds used to hit) and use them to compute genuine EV. This is the
-              // actual fix for match_winner/over_2_5_goals EV being missing or, worse,
-              // silently wrong — see predictions.server.ts for why the old /analysis-based
-              // extraction was unreliable.
               const liveOddsByMatch = new Map<string, Awaited<ReturnType<typeof fetchLiveOdds>>>();
               const uniqueMatchIds = Array.from(new Set(passedThreshold.map((p) => String(p.match_id))));
               for (const mid of uniqueMatchIds) {
@@ -306,12 +277,6 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     reasons: [...(Array.isArray(p.reasons) ? p.reasons : []), `Live market: H ${live.matchWinner.oH.toFixed(2)} / D ${live.matchWinner.oD.toFixed(2)} / A ${live.matchWinner.oA.toFixed(2)} (${live.matchWinner.bookmakers} bookmakers).`],
                     stats: { ...(p.stats ?? {}), oddsAvailable: true },
                   };
-                  // Hedge rule (two paths, either qualifies):
-                  //  1) confidence < 60% AND EV < +10% — a shaky pick either way.
-                  //  2) confidence < 60% AND EV >= +10% BUT real odds >= 2.60 — technically
-                  //     "good value" on paper, but at long odds and low confidence the
-                  //     variance is high enough that hedging into the safer bet still makes
-                  //     sense. Only applied when a real AH +0.5 line is actually quoted.
                   const lowConfidence = Number(p.confidence) < 60;
                   const hedgeEligible = lowConfidence && (ev < 0.10 || (ev >= 0.10 && realOdds >= 2.60));
                   if (hedgeEligible) {
@@ -353,7 +318,6 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     stats: { ...(p.stats ?? {}), oddsAvailable: true },
                   };
                 }
-                // No real live odds found for this pick's market — confidence-only, no EV.
                 noOddsCount++;
                 return {
                   ...p,
@@ -403,6 +367,10 @@ export const Route = createFileRoute("/api/analyze-stream")({
               await supabaseAdmin
                 .from("predictions")
                 .insert(finalPreds.map((p) => ({ ...p, analysis_id: analysisRow.id })));
+
+              // Lock Single/Combo of the Day for today if not already locked — see
+              // predictions.functions.ts for why this must never overwrite an existing lock.
+              await lockDailyBestPickIfNeeded();
 
               send("done", {
                 analysisId: analysisRow.id,
