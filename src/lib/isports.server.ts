@@ -17,7 +17,6 @@ async function getKeyStatuses() {
   const { data } = await supabaseAdmin.from("api_key_status").select("key_index, exhausted_at, active, api_key");
   let rows = (data ?? []) as { key_index: number; exhausted_at: string | null; active: boolean; api_key: string | null }[];
 
-  // Ensure both rows exist.
   const missing: number[] = [];
   for (const idx of [1, 2]) {
     if (!rows.find((r) => r.key_index === idx)) missing.push(idx);
@@ -29,7 +28,6 @@ async function getKeyStatuses() {
     for (const key_index of missing) rows.push({ key_index, active: true, exhausted_at: null, api_key: null });
   }
 
-  // Daily auto-reset: if exhausted_at is from a previous UTC day, clear it.
   const today = utcDayKey(new Date());
   const toReset = rows.filter((r) => r.exhausted_at && utcDayKey(new Date(r.exhausted_at)) !== today);
   if (toReset.length) {
@@ -49,7 +47,6 @@ async function getKeyStatuses() {
 
 function invalidateStatusCache() { statusCache = null; }
 
-/** Resolve the key for a slot: DB-stored value (set via Settings page) wins, else env var fallback. */
 async function keyForIndex(idx: 1 | 2): Promise<string | undefined> {
   const rows = await getKeyStatuses();
   const dbKey = rows.find((r) => r.key_index === idx)?.api_key;
@@ -58,7 +55,6 @@ async function keyForIndex(idx: 1 | 2): Promise<string | undefined> {
   return process.env.ISPORTS_API_KEY_2 || undefined;
 }
 
-// Manual override: when set, get() will use only this key (no failover).
 let forcedKey: 1 | 2 | null = null;
 export function setForcedKey(idx: 1 | 2 | null) {
   forcedKey = idx;
@@ -86,8 +82,32 @@ async function recordFailover() {
   await supabaseAdmin.from("api_usage").insert({ endpoint: "__failover" });
 }
 
-function isQuotaResponse(json: any, httpStatus: number): boolean {
-  if (httpStatus === 429) return true;
+// ---- Request spacing (throttle) ----
+// iSportsAPI doesn't publicly document a per-second/burst limit for the trial tier, but
+// real-world behavior (scans stalling partway through ~40-50 matches when fired back to
+// back) strongly suggests one exists. Every real network call funnels through here
+// (get() -> tryWithKey()), so this single choke point staggers ALL calls app-wide -
+// schedule, analysis, and odds - regardless of which higher-level function triggered them.
+// Cache hits never reach this code, so cached matches aren't slowed down by it.
+// 350ms is a conservative guess, not a documented number - safe to tune down if scans
+// stay reliable, or up if 429s persist.
+const MIN_CALL_INTERVAL_MS = 350;
+let lastCallAt = 0;
+function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
+async function throttle() {
+  const wait = lastCallAt + MIN_CALL_INTERVAL_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastCallAt = Date.now();
+}
+
+/**
+ * Real permanent exhaustion of the trial's DAILY call allowance (resets at UTC midnight,
+ * handled by the daily-reset logic above). Distinct from a transient per-second rate limit
+ * - conflating the two was a real bug: a burst-rate 429 was being treated identically to
+ * "you're out of calls for today," marking the key dead and potentially failing over or
+ * aborting a scan over what was actually just a momentary throttle.
+ */
+function isDailyQuotaResponse(json: any): boolean {
   if (json && typeof json === "object") {
     const code = json.code;
     if (code === 10 || code === "10") return true;
@@ -97,42 +117,68 @@ function isQuotaResponse(json: any, httpStatus: number): boolean {
   return false;
 }
 
-async function tryWithKey<T = any>(idx: 1 | 2, path: string, params: Record<string, string>): Promise<{ ok: true; json: T } | { ok: false; quota: boolean; reason: string }> {
+/** A transient "too many requests too fast" signal - should be retried with backoff, never
+ * treated as daily exhaustion. HTTP 429 is the only firm, universal signal available here;
+ * iSportsAPI doesn't document a body-level throttle code to check alongside it. */
+function isRateLimitedResponse(httpStatus: number): boolean {
+  return httpStatus === 429;
+}
+
+async function tryWithKey<T = any>(idx: 1 | 2, path: string, params: Record<string, string>): Promise<{ ok: true; json: T } | { ok: false; quota: boolean; rateLimited: boolean; reason: string }> {
   const k = await keyForIndex(idx);
-  if (!k) return { ok: false, quota: false, reason: `ISPORTS_API_KEY${idx === 2 ? "_2" : ""} not configured` };
+  if (!k) return { ok: false, quota: false, rateLimited: false, reason: `ISPORTS_API_KEY${idx === 2 ? "_2" : ""} not configured` };
+  await throttle();
   const qs = new URLSearchParams({ api_key: k, ...params }).toString();
   const url = `${BASE}${path}?${qs}`;
   const res = await fetch(url, { method: "GET" });
   const text = await res.text();
   let json: any;
   try { json = JSON.parse(text); } catch {
-    if (!res.ok) return { ok: false, quota: false, reason: `HTTP ${res.status}: ${text.slice(0, 200)}` };
-    return { ok: false, quota: false, reason: `non-JSON response` };
+    if (isRateLimitedResponse(res.status)) return { ok: false, quota: false, rateLimited: true, reason: `HTTP 429 (rate limited)` };
+    if (!res.ok) return { ok: false, quota: false, rateLimited: false, reason: `HTTP ${res.status}: ${text.slice(0, 200)}` };
+    return { ok: false, quota: false, rateLimited: false, reason: `non-JSON response` };
   }
-  if (isQuotaResponse(json, res.status)) {
-    return { ok: false, quota: true, reason: `quota exceeded (key ${idx})` };
+  if (isRateLimitedResponse(res.status)) {
+    return { ok: false, quota: false, rateLimited: true, reason: `HTTP 429 (rate limited, key ${idx})` };
   }
-  if (!res.ok) return { ok: false, quota: false, reason: `HTTP ${res.status}: ${text.slice(0, 200)}` };
+  if (isDailyQuotaResponse(json)) {
+    return { ok: false, quota: true, rateLimited: false, reason: `daily quota exceeded (key ${idx})` };
+  }
+  if (!res.ok) return { ok: false, quota: false, rateLimited: false, reason: `HTTP ${res.status}: ${text.slice(0, 200)}` };
   if (json.code !== 0 && json.code !== undefined) {
-    return { ok: false, quota: false, reason: `code=${json.code}: ${json.message ?? "unknown"}` };
+    return { ok: false, quota: false, rateLimited: false, reason: `code=${json.code}: ${json.message ?? "unknown"}` };
   }
-  // Fire-and-forget API usage tracking.
   void supabaseAdmin.from("api_usage").insert({ endpoint: path }).then(({ error }) => {
     if (error) console.warn(`[api_usage] insert failed: ${error.message}`);
   });
   return { ok: true, json };
 }
 
+/** Retries a single key on rate-limit responses with exponential backoff (not on daily
+ * quota or other errors - those fail fast/failover immediately, retrying won't help). */
+async function tryWithKeyAndBackoff<T = any>(idx: 1 | 2, path: string, params: Record<string, string>): Promise<{ ok: true; json: T } | { ok: false; quota: boolean; reason: string }> {
+  const BACKOFFS_MS = [500, 1000, 2000];
+  let last: Awaited<ReturnType<typeof tryWithKey<T>>> | null = null;
+  for (let attempt = 0; attempt <= BACKOFFS_MS.length; attempt++) {
+    const result = await tryWithKey<T>(idx, path, params);
+    if (result.ok || !result.rateLimited) return result;
+    last = result;
+    if (attempt < BACKOFFS_MS.length) {
+      console.warn(`[iSportsAPI] ${path} key ${idx} rate-limited, retrying in ${BACKOFFS_MS[attempt]}ms (attempt ${attempt + 1}/${BACKOFFS_MS.length})`);
+      await sleep(BACKOFFS_MS[attempt]);
+    }
+  }
+  return last!;
+}
+
 async function get<T = any>(path: string, params: Record<string, string>): Promise<T> {
-  // Manual override: use only the forced key, no failover.
   if (forcedKey) {
-    const result = await tryWithKey<T>(forcedKey, path, params);
+    const result = await tryWithKeyAndBackoff<T>(forcedKey, path, params);
     if (result.ok) return result.json;
     if (result.quota) await markExhausted(forcedKey);
     console.error(`[iSportsAPI] ${path} forced key ${forcedKey} failed: ${result.reason}`);
     throw new Error(`iSportsAPI ${path} (forced key ${forcedKey}): ${result.reason}`);
   }
-  // Determine starting key: prefer 1, but skip if marked exhausted.
   const primaryExhausted = await isExhausted(1);
   const secondaryExhausted = await isExhausted(2);
 
@@ -144,16 +190,14 @@ async function get<T = any>(path: string, params: Record<string, string>): Promi
     const idx = order[i];
     if (idx === 1 && primaryExhausted) continue;
     if (idx === 2 && secondaryExhausted && !primaryExhausted) {
-      // both exhausted
       lastReason = "both keys exhausted";
       continue;
     }
-    const result = await tryWithKey<T>(idx, path, params);
+    const result = await tryWithKeyAndBackoff<T>(idx, path, params);
     if (result.ok) return result.json;
     lastReason = result.reason;
     if (result.quota) {
       await markExhausted(idx);
-      // If we just exhausted key 1 and key 2 is available, log a failover.
       if (idx === 1 && i + 1 < order.length && !attemptedFailover) {
         const nextIdx = order[i + 1];
         const otherK = await keyForIndex(nextIdx);
@@ -163,9 +207,11 @@ async function get<T = any>(path: string, params: Record<string, string>): Promi
           await recordFailover();
         }
       }
-      continue; // try next key
+      continue;
     }
-    // non-quota error: don't try the second key, fail fast.
+    // non-quota error (including a rate limit that persisted through all backoff retries):
+    // don't try the second key, fail fast - switching keys doesn't fix a rate limit, which
+    // is almost certainly IP/account-wide, not per-key.
     console.error(`[iSportsAPI] ${path} key ${idx} failed: ${result.reason}`);
     throw new Error(`iSportsAPI ${path}: ${result.reason}`);
   }
@@ -181,11 +227,10 @@ export type ScheduleMatch = {
   awayId?: string;
   homeName: string;
   awayName: string;
-  matchTime: number; // unix seconds
+  matchTime: number;
   raw: any;
 };
 
-/** Schedule by date (YYYY-MM-DD). Returns ALL leagues for that date. */
 export async function fetchScheduleByDate(date: string): Promise<ScheduleMatch[]> {
   const { data: cached } = await supabaseAdmin
     .from("analysis_cache")
@@ -250,14 +295,9 @@ async function getOddsMainPayload(matchId: string): Promise<any> {
   }
 }
 
-/**
- * Check if a match has real 1X2 odds from at least one bookmaker on /odds/main.
- * Fails open (returns true) on transport errors so a flaky odds endpoint doesn't wipe
- * out a scan.
- */
 export async function hasMainOdds(matchId: string): Promise<boolean> {
   const payload = await getOddsMainPayload(matchId);
-  if (!payload) return true; // fail open on fetch failure
+  if (!payload) return true;
   const rows = payload?.data?.europeOdds;
   return Array.isArray(rows) && rows.length > 0;
 }
@@ -271,33 +311,10 @@ function median(nums: number[]): number {
 export type LiveOdds = {
   matchWinner?: { oH: number; oD: number; oA: number; bookmakers: number };
   goals25?: { oOver: number; oUnder: number; bookmakers: number };
-  // Real Asian Handicap +0.5 prices — used to hedge a shaky Match Winner pick into a
-  // "win or draw" bet. Only populated when a bookmaker is actually quoting exactly a
-  // 0.5 line on the relevant side; never approximated from other lines.
   ahHomePlus?: { odds: number; bookmakers: number };
   ahAwayPlus?: { odds: number; bookmakers: number };
 };
 
-/**
- * Real, per-match live bookmaker odds — pulled from /odds/main (same endpoint hasMainOdds
- * checks), NOT from /analysis. The /analysis payload's homeOdds/awayOdds fields turned out
- * to be each team's historical per-match odds logs, not the current fixture's live price,
- * and /analysis carries no matchId to safely match a row to "this" match anyway. This is
- * the only source of odds trustworthy enough to compute real EV against.
- *
- * europeOdds row shape: matchId,companyId,initH,initD,initA,instH,instD,instA,timestamp,bool,int
- *   — already decimal odds. Uses the *instant* (current) columns, median across bookmakers.
- * overUnder row shape: matchId,companyId,initTotal,initOver,initUnder,instTotal,instOver,instUnder,timestamp,bool,int
- *   — prices are Hong Kong format (decimal = HK + 1). Only rows quoting exactly a 2.5 total
- *   line are used, since comparing our model's "over 2.5" probability against a different
- *   line's price would be comparing two different bets.
- * handicap row shape: matchId,companyId,initLine,initHomeHK,initAwayHK,instLine,instHomeHK,instAwayHK,bool,bool,timestamp,bool,int
- *   — line is stated relative to the home team (positive = home is getting goals, i.e.
- *   home is the underdog on this line). Prices are Hong Kong format. "Home +0.5" price
- *   comes from rows where instLine = +0.5 (home price column); "Away +0.5" comes from
- *   rows where instLine = -0.5 (away price column, since a -0.5 home line is the same
- *   thing as a +0.5 away line).
- */
 export async function fetchLiveOdds(matchId: string): Promise<LiveOdds> {
   const payload = await getOddsMainPayload(matchId);
   const result: LiveOdds = {};
@@ -312,7 +329,6 @@ export async function fetchLiveOdds(matchId: string): Promise<LiveOdds> {
       hs.push(h); ds.push(d); as.push(a);
     }
   }
-  // Require at least 2 bookmakers agreeing on usable prices before trusting the median.
   if (hs.length >= 2) {
     result.matchWinner = { oH: median(hs), oD: median(ds), oA: median(as), bookmakers: hs.length };
   }
@@ -334,7 +350,7 @@ export async function fetchLiveOdds(matchId: string): Promise<LiveOdds> {
   const overs: number[] = [], unders: number[] = [];
   for (const row of ouRows) {
     const c = String(row).split(",");
-    const totalLine = Number(c[5]); // instant total line for this bookmaker
+    const totalLine = Number(c[5]);
     if (!Number.isFinite(totalLine) || Math.abs(totalLine - 2.5) > 0.01) continue;
     const oHk = Number(c[6]), uHk = Number(c[7]);
     if (Number.isFinite(oHk) && Number.isFinite(uHk)) {
@@ -348,7 +364,6 @@ export async function fetchLiveOdds(matchId: string): Promise<LiveOdds> {
   return result;
 }
 
-/** Match analysis with 12h cache. Refresh forces a re-fetch. */
 export async function fetchMatchAnalysis(matchId: string, refresh = false): Promise<any> {
   if (!refresh) {
     const { data: cached } = await supabaseAdmin
@@ -378,7 +393,6 @@ export type ResultRow = {
   status: string | null;
 };
 
-/** FT results sourced from /schedule (which includes scores for finished games). */
 export async function fetchResultsByDate(date: string): Promise<ResultRow[]> {
   const cacheKey = `__schedule_${date}`;
   let payload: any;
@@ -438,12 +452,10 @@ export async function fetchResultsByDate(date: string): Promise<ResultRow[]> {
     .map(({ _rawStatus, ...r }: any) => r);
 }
 
-/** Set (or clear, with an empty string) the DB-stored API key for a slot. Used by the Settings page. */
 export async function setApiKeyForSlot(idx: 1 | 2, key: string): Promise<void> {
   await supabaseAdmin.from("api_key_status").upsert({
     key_index: idx,
     api_key: key.trim() || null,
-    // Setting a fresh key should also clear any stale exhausted/inactive flag.
     exhausted_at: null,
     active: true,
     updated_at: new Date().toISOString(),
@@ -451,7 +463,6 @@ export async function setApiKeyForSlot(idx: 1 | 2, key: string): Promise<void> {
   invalidateStatusCache();
 }
 
-/** Whether a key is currently configured for a slot (DB or env), without exposing the value. */
 export async function getApiKeySlotStatus(): Promise<{ slot1: boolean; slot2: boolean; slot1Source: "db" | "env" | "none"; slot2Source: "db" | "env" | "none" }> {
   const rows = await getKeyStatuses();
   const r1 = rows.find((r) => r.key_index === 1);
