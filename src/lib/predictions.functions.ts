@@ -17,7 +17,6 @@ const BLOCKED_KEYWORDS = [
   "asian cup", "oceania", "world cup", "international",
 ];
 
-// Statistically reliable major leagues (name-substring match, lowercase).
 const TRUSTED_LEAGUE_PATTERNS = [
   "premier league", "championship", "league one", "league two",
   "la liga", "segunda",
@@ -30,22 +29,15 @@ const TRUSTED_LEAGUE_PATTERNS = [
   "scottish premiership", "belgian", "swiss super",
 ];
 
-// Regional/state qualifiers that indicate a lower, non-elite competition even when the
-// name contains a trusted-sounding phrase like "premier league" (e.g. Australian state
-// NPL comps branded "Queensland Premier League", "Victoria Premier League", etc.).
 const MINOR_QUALIFIERS = [
   "queensland", "victoria", "victorian", "new south wales", "western australia",
   "south australia", "tasmania", "northern territory", "capital territory",
   "state league", "npl", "county", "district", "metro",
   "nsw", "vic", "qld", " sa ", " wa ", "tas", "act", " nt ",
 ];
-// A trailing tier number ("... League 2", "... Premier League 3") is a strong signal of a
-// lower division that a loose substring match on "premier league" alone would miss.
 function hasTierNumber(name: string): boolean {
   return /\b[2-9]\b\s*$/.test(name.trim());
 }
-// Women's fixtures aren't reliably flagged by league name alone (e.g. "WK League" doesn't
-// say "women") — the marker is usually on the team names instead ("(W)" suffix, etc.).
 export function isWomensFixture(homeName?: string, awayName?: string): boolean {
   const check = (n?: string) => {
     if (!n) return false;
@@ -68,16 +60,13 @@ function isTrusted(name?: string) {
 }
 
 const RunInput = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), // YYYY-MM-DD, defaults to today (UTC)
-  timeframeHours: z.number().int().min(1).max(48).optional(), // upcoming window
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  timeframeHours: z.number().int().min(1).max(48).optional(),
   maxMatches: z.number().int().min(1).max(40).optional(),
   maxPicks: z.number().int().min(1).max(10).optional(),
-  minOdds: z.number().min(1).max(10).optional(), // implied-odds floor (1/p)
+  minOdds: z.number().min(1).max(10).optional(),
   trustedOnly: z.boolean().optional(),
-  refresh: z.boolean().optional(), // force re-fetch of analysis cache
-  // Scanner focuses on match_winner and over_2_5_goals only — the only two bet types with
-  // a real, measurable edge available in this API's data (double chance, asian handicap
-  // and corners were removed — no genuine market price exists for those to compute EV against).
+  refresh: z.boolean().optional(),
   betType: z.enum(["all","match_winner","over_2_5_goals"]).optional(),
 });
 
@@ -93,7 +82,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
     const minOdds = data.minOdds ?? 1.0;
     const trustedOnly = data.trustedOnly ?? true;
     const betType = data.betType ?? "all";
-    const runCorners = false; // corners engine removed from the scanner — no EV available for it.
+    const runCorners = false;
     const runMatch = betType === "all" || MATCH_TYPES.has(betType);
 
     const all = await fetchScheduleByDate(date);
@@ -101,7 +90,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
     const windowEnd = now + timeframeHours * 3600 * 1000;
 
     const candidates = all
-      .filter((m) => m.matchTime * 1000 > now) // strictly future
+      .filter((m) => m.matchTime * 1000 > now)
       .filter((m) => m.matchTime * 1000 <= windowEnd)
       .filter((m) => !isBlocked(m.leagueName))
       .filter((m) => !isWomensFixture(m.homeName, m.awayName))
@@ -109,7 +98,6 @@ export const runAnalysis = createServerFn({ method: "POST" })
       .sort((a, b) => a.matchTime - b.matchTime)
       .slice(0, maxMatches);
 
-    // Dedup: skip matches that already have any prediction recorded.
     let skippedExisting = 0;
     let candidatesAfterDedup = candidates;
     if (candidates.length) {
@@ -148,8 +136,6 @@ export const runAnalysis = createServerFn({ method: "POST" })
         });
 
         const corners = runCorners ? predictCorners(analysis, m.homeId, m.awayId) : [];
-        // Pass league rank straight from the schedule payload — homeRank/awayRank live
-        // there (e.g. "15" or "MEX Lig2C-15"), not in /analysis.
         const matchPreds = runMatch
           ? predictMatchOutcomes(analysis, m.homeId, m.awayId, undefined, (m.raw as any)?.homeRank, (m.raw as any)?.awayRank)
           : [];
@@ -177,7 +163,6 @@ export const runAnalysis = createServerFn({ method: "POST" })
             risk_level: p.riskLevel,
             reasons: p.reasons,
             stats: p.stats,
-            // Only match_winner ever has a real expectedValue — see predictions.server.ts.
             recommendation: p.expectedValue !== undefined
               ? `Lean ${p.selection} — ${p.expectedValue >= 0 ? "+" : ""}${(p.expectedValue * 100).toFixed(1)}% edge at ${p.marketOdds!.toFixed(2)} odds.`
               : `Lean ${p.selection} (${p.confidence}% model confidence, no market price).`,
@@ -188,9 +173,6 @@ export const runAnalysis = createServerFn({ method: "POST" })
         }
 
         const filteredAll = betType === "all" ? all : all.filter((x) => x.prediction_type === betType);
-        // Prefer real, priced edge over raw confidence: picks with a computed expected_value
-        // sort by EV first (highest edge vs the market), everything else (no market price
-        // available for that bet type) falls back to confidence ordering below them.
         filteredAll.sort((a, b) => {
           const evA = a.expected_value, evB = b.expected_value;
           if (evA != null && evB != null) return Number(evB) - Number(evA);
@@ -215,8 +197,6 @@ export const runAnalysis = createServerFn({ method: "POST" })
       }
     }
 
-    // Threshold + implied-odds filter, then top maxPicks overall.
-    // Same EV-first, confidence-fallback ordering as above, applied across all matches.
     const passedThreshold = predictions
       .filter((p) => meetsConfidenceThreshold(p.prediction_type, Number(p.confidence)))
       .filter((p) => 100 / Number(p.confidence) >= minOdds)
@@ -229,10 +209,6 @@ export const runAnalysis = createServerFn({ method: "POST" })
       })
       .slice(0, maxPicks);
 
-    // Fetch real live odds once per unique qualifying match and use them to compute
-    // genuine EV — see predictions.server.ts for why the old /analysis-based extraction
-    // was unreliable (no matchId to match rows against, homeOdds/awayOdds were historical
-    // logs, not the current fixture's price).
     let noOddsCount = 0;
     let hedgedCount = 0;
     const finalPreds: any[] = [];
@@ -246,11 +222,6 @@ export const runAnalysis = createServerFn({ method: "POST" })
       if (p.prediction_type === "match_winner" && live?.matchWinner && modelProbability != null) {
         const realOdds = p.selection === "Home Win" ? live.matchWinner.oH : live.matchWinner.oA;
         const ev = Math.round((modelProbability * realOdds - 1) * 10000) / 10000;
-        // Hedge rule (two paths, either qualifies):
-        //  1) confidence < 60% AND EV < +10% — a shaky pick either way.
-        //  2) confidence < 60% AND EV >= +10% BUT real odds >= 2.60 — technically "good
-        //     value" on paper, but at long odds and low confidence the variance is high
-        //     enough that hedging still makes sense. Only when a real AH +0.5 line exists.
         let hedged: any = null;
         const lowConfidence = Number(p.confidence) < 60;
         if (lowConfidence && (ev < 0.10 || (ev >= 0.10 && realOdds >= 2.60))) {
@@ -304,9 +275,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
     }
     if (noOddsCount) console.log(`[runAnalysis] ${noOddsCount} picks have no confirmed live market price for their exact bet type`);
     if (hedgedCount) console.log(`[runAnalysis] ${hedgedCount} picks hedged to a real +0.5 Asian Handicap line`);
-    
 
-    // Skip saving empty scans entirely.
     if (!finalPreds.length) {
       return {
         analysisId: null,
@@ -342,6 +311,8 @@ export const runAnalysis = createServerFn({ method: "POST" })
       .from("predictions")
       .insert(finalPreds.map((p) => ({ ...p, analysis_id: analysisRow.id })));
 
+    await lockDailyBestPickIfNeeded();
+
     return {
       analysisId: analysisRow.id,
       matchesAnalyzed: finalCandidates.length,
@@ -357,13 +328,8 @@ export const getAnalyses = createServerFn({ method: "POST" })
     engine: z.enum(["corners", "match"]).optional(),
     page: z.number().int().min(1).optional(),
     pageSize: z.union([z.literal(50), z.literal(100)]).optional(),
-    // Inclusive date range on scan creation time, YYYY-MM-DD in the user's local time —
-    // converted to a UTC timestamp range here.
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    // Same filter vocabulary as the History page's UI filters — used only to compute
-    // matching_count per scan below, so the person can see which scans have a matching
-    // pick without opening every one of them.
     typeFilter: z.enum(["all", "match_winner", "match_winner_hedged", "over_2_5_goals"]).optional(),
     evFilter: z.enum(["all", "positive", "negative", "20plus", "no_ev"]).optional(),
   }).parse(d ?? {}))
@@ -511,9 +477,6 @@ export const checkApiStatus = createServerFn({ method: "GET" }).handler(async ()
   return { hasKey, live: hasKey, error: hasKey ? null : "no key", slots };
 });
 
-// Save (or clear, by passing an empty string) the iSportsAPI key for slot 1 or 2.
-// Server-only — the key value is never returned to the browser by any function in
-// this file, only booleans indicating whether a slot is configured.
 export const setApiKey = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => z.object({ slot: z.union([z.literal(1), z.literal(2)]), key: z.string().max(200) }).parse(d))
   .handler(async ({ data }) => {
@@ -526,7 +489,6 @@ export const getApiUsageToday = createServerFn({ method: "GET" }).handler(async 
   const today = new Date().toISOString().slice(0, 10);
   const startOfDay = new Date(today + "T00:00:00.000Z").toISOString();
 
-  // Look for a failover marker today.
   const { data: failoverRows } = await supabaseAdmin
     .from("api_usage")
     .select("called_at")
@@ -536,14 +498,12 @@ export const getApiUsageToday = createServerFn({ method: "GET" }).handler(async 
     .limit(1);
   const failoverAt = failoverRows && failoverRows.length ? failoverRows[0].called_at : null;
 
-  // Active key: read api_key_status; if key 1 inactive/exhausted -> key 2.
   const { data: statusRows } = await supabaseAdmin
     .from("api_key_status")
     .select("key_index, exhausted_at, active");
   const k1 = statusRows?.find((r: any) => r.key_index === 1);
   const activeKey: 1 | 2 = k1 && (k1.active === false || k1.exhausted_at) ? 2 : 1;
 
-  // Count calls today, filtered to after the failover timestamp if present.
   let q = supabaseAdmin
     .from("api_usage")
     .select("*", { count: "exact", head: true })
@@ -568,7 +528,6 @@ export const updateResults = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     if (!preds || !preds.length) return { updated: 0, skipped: 0, noResultFound: 0 };
 
-    // Group by date for efficient batched results fetch
     const byDate: Record<string, any[]> = {};
     for (const p of preds) {
       if (!p.kickoff) continue;
@@ -586,8 +545,6 @@ export const updateResults = createServerFn({ method: "POST" })
       try {
         results = await fetchResultsByDate(date);
       } catch (e: any) {
-        // A single date failing (e.g. trial-key date-range limits) shouldn't abort the
-        // whole batch — skip this date's predictions and keep going with the rest.
         failedDates++;
         console.warn(`[updateResults] date=${date} fetch failed, skipping: ${e?.message ?? e}`);
         continue;
@@ -648,8 +605,6 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
     try {
       results = await fetchResultsByDate(date);
     } catch (e: any) {
-      // A single date failing (e.g. trial-key date-range limits, like "Date out of range")
-      // shouldn't abort the whole batch — skip this date and keep going with the rest.
       failedDates++;
       console.warn(`[updateAllPendingResults] date=${date} fetch failed, skipping: ${e?.message ?? e}`);
       stillPending += group.length;
@@ -683,14 +638,74 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
 });
 
 // ---- Single / Combo of the Day ----
-// Computed live from real saved picks — no separate storage table, no duplicated state.
-// Only ever draws from picks with a real, confirmed market price and non-negative EV
-// (the same discipline used everywhere else in this app). Combo is EXPERIMENTAL and
-// tracked completely separately from the validated single-pick stats — see the historical
-// numbers from this exact test: a daily 3-4 leg Match Winner ACCA went 0/14 winning days
-// despite every leg being individually profitable as a single. 2 legs from different
-// matches is the more defensible starting point, but this is data-gathering, not a
-// recommendation to stake it.
+// LOCKED the first time a scan produces a qualifying pick for a given day, in
+// daily_best_picks — never recomputed/overwritten by a later same-day scan. Without this,
+// a pick that already lost could get silently swapped out for a later, still-unresolved
+// higher-EV pick, making "Single of the Day: WON" misleading about what was actually
+// knowable/committed at the time. Only ever draws from picks with a real, confirmed
+// market price, non-negative EV, and at/below the EV ceiling (same discipline as
+// elsewhere in this app). Combo is EXPERIMENTAL and tracked completely separately from
+// the validated single-pick stats — see the historical numbers from this exact test: a
+// daily 3-4 leg Match Winner ACCA went 0/14 winning days despite every leg being
+// individually profitable as a single. 2 legs from different matches is the more
+// defensible starting point, but this is data-gathering, not a recommendation to stake it.
+//
+// EV ceiling backtest (graded picks, July 12 onward):
+//   10-20% EV  (n=41): 53.7% win rate, +3.0% realized ROI
+//   20-35% EV  (n=27): 48.1% win rate, +6.6% realized ROI
+//   35-50% EV  (n=6):  50.0% win rate, +22.8% realized ROI  (too small a sample to trust)
+//   50%+ EV    (n=27): 25.9% win rate, -10.6% realized ROI  (confirmed collapse zone)
+// 40% sits just above the well-performing 20-35% band, captures a modest slice of the
+// promising-but-thin 35-50% band, and stays clear of the confirmed 50%+ collapse.
+const DAILY_PICK_EV_CEILING = 0.40;
+const DAILY_PICK_TYPES = ["match_winner", "over_2_5_goals", "match_winner_hedged"];
+
+/**
+ * Locks in Single/Combo of the Day for `today` (UTC) if not already locked. Called once at
+ * the end of every successful scan. A no-op if a lock already exists for today — that's
+ * the whole point: the FIRST scan of the day that produces a qualifying pick sets it, and
+ * it stays fixed regardless of what later scans that same day find.
+ */
+export async function lockDailyBestPickIfNeeded(): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: existingLock } = await supabaseAdmin
+    .from("daily_best_picks")
+    .select("day")
+    .eq("day", today)
+    .maybeSingle();
+  if (existingLock) return;
+
+  const { data: todaysPicks, error } = await supabaseAdmin
+    .from("predictions")
+    .select("id, match_id, expected_value")
+    .in("prediction_type", DAILY_PICK_TYPES)
+    .not("market_odds", "is", null)
+    .gte("expected_value", 0)
+    .lte("expected_value", DAILY_PICK_EV_CEILING)
+    .gte("created_at", `${today}T00:00:00.000Z`)
+    .lte("created_at", `${today}T23:59:59.999Z`);
+  if (error) { console.warn(`[lockDailyBestPickIfNeeded] query failed: ${error.message}`); return; }
+  if (!todaysPicks || !todaysPicks.length) return;
+
+  const bestPerMatch = new Map<string, any>();
+  for (const p of todaysPicks) {
+    const existing = bestPerMatch.get(p.match_id);
+    if (!existing || Number(p.expected_value) > Number(existing.expected_value)) bestPerMatch.set(p.match_id, p);
+  }
+  const sorted = Array.from(bestPerMatch.values()).sort((a, b) => Number(b.expected_value) - Number(a.expected_value));
+  const single = sorted[0];
+  const comboLeg2 = sorted[1] ?? null;
+
+  const { error: insertErr } = await supabaseAdmin.from("daily_best_picks").upsert({
+    day: today,
+    single_prediction_id: single.id,
+    combo_prediction_id_1: single.id,
+    combo_prediction_id_2: comboLeg2 ? comboLeg2.id : null,
+    locked_at: new Date().toISOString(),
+  }, { onConflict: "day", ignoreDuplicates: true });
+  if (insertErr) console.warn(`[lockDailyBestPickIfNeeded] upsert failed: ${insertErr.message}`);
+}
+
 export const getDailyPicks = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => z.object({
     page: z.number().int().min(1).optional(),
@@ -699,71 +714,74 @@ export const getDailyPicks = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const page = data.page ?? 1;
     const pageSize = data.pageSize ?? 14;
-    const { data: rows, error } = await supabaseAdmin
-      .from("predictions")
-      .select("*")
-      .in("prediction_type", ["match_winner", "over_2_5_goals", "match_winner_hedged"])
-      .not("market_odds", "is", null)
-      .gte("expected_value", 0)
-      .order("created_at", { ascending: false })
-      .limit(3000);
-    if (error) throw new Error(error.message);
 
-    const byDay = new Map<string, any[]>();
-    for (const p of rows ?? []) {
-      const day = new Date(p.created_at).toISOString().slice(0, 10);
-      if (!byDay.has(day)) byDay.set(day, []);
-      byDay.get(day)!.push(p);
+    const { data: lockRows, error: lockErr, count } = await supabaseAdmin
+      .from("daily_best_picks")
+      .select("*", { count: "exact" })
+      .order("day", { ascending: false })
+      .range((page - 1) * pageSize, (page - 1) * pageSize + pageSize - 1);
+    if (lockErr) throw new Error(lockErr.message);
+
+    const idsNeeded = new Set<string>();
+    for (const l of lockRows ?? []) {
+      if (l.single_prediction_id) idsNeeded.add(l.single_prediction_id);
+      if (l.combo_prediction_id_1) idsNeeded.add(l.combo_prediction_id_1);
+      if (l.combo_prediction_id_2) idsNeeded.add(l.combo_prediction_id_2);
     }
-    const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
-    const pageDays = days.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
+    const { data: predRows } = idsNeeded.size
+      ? await supabaseAdmin.from("predictions").select("*").in("id", Array.from(idsNeeded))
+      : { data: [] as any[] };
+    const byId = new Map((predRows ?? []).map((p: any) => [p.id, p]));
 
-    // A ceiling on EV eligibility for Single/Combo selection — not just "highest EV wins".
-    // On a two-outcome market with real bookmaker prices (modest margins), an edge this
-    // large is far more likely to be a thin/noisy probability estimate (e.g. a head-to-head
-    // signal built from only 2 past meetings pulling the number hard) than a genuinely
-    // reliable opportunity. Picks above this are excluded from being selected as the
-    // flagship pick — they still exist and are gradable in History, just not spotlighted
-    // as "best".
-    //
-    // Set from a real backtest across 4 EV bands on graded picks (July 12 onward):
-    //   10-20% EV  (n=41): 53.7% win rate, +3.0% realized ROI
-    //   20-35% EV  (n=27): 48.1% win rate, +6.6% realized ROI
-    //   35-50% EV  (n=6):  50.0% win rate, +22.8% realized ROI  (too small a sample to trust)
-    //   50%+ EV    (n=27): 25.9% win rate, -10.6% realized ROI  (confirmed collapse zone)
-    // 40% sits just above the well-performing 20-35% band, captures a modest slice of the
-    // promising-but-thin 35-50% band, and stays clear of the confirmed 50%+ collapse.
-    const EV_CEILING = 0.40;
-
-    const results = pageDays.map((day) => {
-      const allPicksThatDay = byDay.get(day)!;
-      const picks = allPicksThatDay
-        .filter((p) => Number(p.expected_value) <= EV_CEILING)
-        .sort((a, b) => Number(b.expected_value) - Number(a.expected_value));
-      const excludedOutliers = allPicksThatDay.length - picks.length;
-      const single = picks[0] ?? null;
-
-      // Combo: top 2 legs from DIFFERENT matches, highest EV first.
-      const comboLegs: any[] = [];
-      for (const p of picks) {
-        if (comboLegs.length === 2) break;
-        if (comboLegs.some((l) => l.match_id === p.match_id)) continue;
-        comboLegs.push(p);
+    const days = (lockRows ?? []).map((l) => l.day as string);
+    let infoByDay = new Map<string, { qualifying: number; excluded: number }>();
+    if (days.length) {
+      const minDay = days[days.length - 1], maxDay = days[0];
+      const { data: dayPicks } = await supabaseAdmin
+        .from("predictions")
+        .select("expected_value, created_at")
+        .in("prediction_type", DAILY_PICK_TYPES)
+        .not("market_odds", "is", null)
+        .gte("expected_value", 0)
+        .gte("created_at", `${minDay}T00:00:00.000Z`)
+        .lte("created_at", `${maxDay}T23:59:59.999Z`);
+      for (const p of dayPicks ?? []) {
+        const day = new Date(p.created_at).toISOString().slice(0, 10);
+        const entry = infoByDay.get(day) ?? { qualifying: 0, excluded: 0 };
+        if (Number(p.expected_value) <= DAILY_PICK_EV_CEILING) entry.qualifying++;
+        else entry.excluded++;
+        infoByDay.set(day, entry);
       }
+    }
+
+    const results = (lockRows ?? []).map((l) => {
+      const single = l.single_prediction_id ? byId.get(l.single_prediction_id) ?? null : null;
+      const leg1 = l.combo_prediction_id_1 ? byId.get(l.combo_prediction_id_1) ?? null : null;
+      const leg2 = l.combo_prediction_id_2 ? byId.get(l.combo_prediction_id_2) ?? null : null;
       let combo: any = null;
-      if (comboLegs.length === 2) {
-        const bothGraded = comboLegs.every((l) => l.is_correct !== null && l.is_correct !== undefined);
-        const won = comboLegs.every((l) => l.is_correct === true);
-        const combinedOdds = comboLegs.reduce((s, l) => s * Number(l.market_odds), 1);
+      if (leg1 && leg2) {
+        const legs = [leg1, leg2];
+        const bothGraded = legs.every((x) => x.is_correct !== null && x.is_correct !== undefined);
+        const won = legs.every((x) => x.is_correct === true);
+        const combinedOdds = legs.reduce((s, x) => s * Number(x.market_odds), 1);
         combo = {
-          legs: comboLegs,
+          legs,
           combinedOdds: Math.round(combinedOdds * 100) / 100,
           isCorrect: bothGraded ? won : null,
           profit: bothGraded ? Math.round((won ? combinedOdds - 1 : -1) * 100) / 100 : null,
         };
       }
-      return { day, single, combo, qualifyingPicksCount: picks.length, excludedOutliers };
+      const info = infoByDay.get(l.day) ?? { qualifying: 0, excluded: 0 };
+      return {
+        day: l.day,
+        single,
+        combo,
+        qualifyingPicksCount: info.qualifying,
+        excludedOutliers: info.excluded,
+        lockedAt: l.locked_at,
+      };
     });
 
-    return { days: results, totalDays: days.length, page, pageSize, totalPages: Math.max(1, Math.ceil(days.length / pageSize)) };
+    const totalCount = count ?? 0;
+    return { days: results, totalDays: totalCount, page, pageSize, totalPages: Math.max(1, Math.ceil(totalCount / pageSize)) };
   });
