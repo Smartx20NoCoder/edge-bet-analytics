@@ -340,8 +340,15 @@ export async function fetchLiveOdds(matchId: string): Promise<LiveOdds> {
     const line = Number(c[5]);
     const homeHk = Number(c[6]), awayHk = Number(c[7]);
     if (!Number.isFinite(line)) continue;
-    if (Math.abs(line - 0.5) < 0.001 && Number.isFinite(homeHk)) homePlus.push(homeHk + 1);
-    if (Math.abs(line + 0.5) < 0.001 && Number.isFinite(awayHk)) awayPlus.push(awayHk + 1);
+    // BUGFIX: the handicap `line` value in this feed is stated relative to the AWAY team,
+    // not home (confirmed by cross-checking against the real 1X2 fair-value benchmark on
+    // real matches — a home favorite's rows show positive lines, an away favorite's rows
+    // show negative lines, which only makes sense if positive = "away is the underdog").
+    // So: "Home +0.5" (home's mirrored line is +0.5) comes from rows where the AWAY line
+    // is -0.5 (away favored by half a goal), using the home price column. "Away +0.5"
+    // comes directly from rows where the away line IS +0.5, using the away price column.
+    if (Math.abs(line + 0.5) < 0.001 && Number.isFinite(homeHk)) homePlus.push(homeHk + 1);
+    if (Math.abs(line - 0.5) < 0.001 && Number.isFinite(awayHk)) awayPlus.push(awayHk + 1);
   }
   if (homePlus.length >= 2) result.ahHomePlus = { odds: median(homePlus), bookmakers: homePlus.length };
   if (awayPlus.length >= 2) result.ahAwayPlus = { odds: median(awayPlus), bookmakers: awayPlus.length };
