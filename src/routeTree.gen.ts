@@ -11,9 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as MatchesRouteImport } from './routes/matches'
 import { Route as HistoryRouteImport } from './routes/history'
-import { Route as CornersRouteImport } from './routes/corners'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiAnalyzeStreamRouteImport } from './routes/api/analyze-stream'
 
@@ -27,19 +25,9 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const MatchesRoute = MatchesRouteImport.update({
-  id: '/matches',
-  path: '/matches',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const HistoryRoute = HistoryRouteImport.update({
   id: '/history',
   path: '/history',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CornersRoute = CornersRouteImport.update({
-  id: '/corners',
-  path: '/corners',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -55,18 +43,14 @@ const ApiAnalyzeStreamRoute = ApiAnalyzeStreamRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/corners': typeof CornersRoute
   '/history': typeof HistoryRoute
-  '/matches': typeof MatchesRoute
   '/settings': typeof SettingsRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/api/analyze-stream': typeof ApiAnalyzeStreamRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/corners': typeof CornersRoute
   '/history': typeof HistoryRoute
-  '/matches': typeof MatchesRoute
   '/settings': typeof SettingsRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/api/analyze-stream': typeof ApiAnalyzeStreamRoute
@@ -74,9 +58,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/corners': typeof CornersRoute
   '/history': typeof HistoryRoute
-  '/matches': typeof MatchesRoute
   '/settings': typeof SettingsRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/api/analyze-stream': typeof ApiAnalyzeStreamRoute
@@ -85,27 +67,16 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/corners'
     | '/history'
-    | '/matches'
     | '/settings'
     | '/sitemap.xml'
     | '/api/analyze-stream'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/corners'
-    | '/history'
-    | '/matches'
-    | '/settings'
-    | '/sitemap.xml'
-    | '/api/analyze-stream'
+  to: '/' | '/history' | '/settings' | '/sitemap.xml' | '/api/analyze-stream'
   id:
     | '__root__'
     | '/'
-    | '/corners'
     | '/history'
-    | '/matches'
     | '/settings'
     | '/sitemap.xml'
     | '/api/analyze-stream'
@@ -113,9 +84,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  CornersRoute: typeof CornersRoute
   HistoryRoute: typeof HistoryRoute
-  MatchesRoute: typeof MatchesRoute
   SettingsRoute: typeof SettingsRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   ApiAnalyzeStreamRoute: typeof ApiAnalyzeStreamRoute
@@ -137,25 +106,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/matches': {
-      id: '/matches'
-      path: '/matches'
-      fullPath: '/matches'
-      preLoaderRoute: typeof MatchesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/history': {
       id: '/history'
       path: '/history'
       fullPath: '/history'
       preLoaderRoute: typeof HistoryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/corners': {
-      id: '/corners'
-      path: '/corners'
-      fullPath: '/corners'
-      preLoaderRoute: typeof CornersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -177,9 +132,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  CornersRoute: CornersRoute,
   HistoryRoute: HistoryRoute,
-  MatchesRoute: MatchesRoute,
   SettingsRoute: SettingsRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   ApiAnalyzeStreamRoute: ApiAnalyzeStreamRoute,
@@ -187,3 +140,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
