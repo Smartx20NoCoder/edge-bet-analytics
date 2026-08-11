@@ -74,18 +74,21 @@ export type Database = {
       api_key_status: {
         Row: {
           active: boolean
+          api_key: string | null
           exhausted_at: string | null
           key_index: number
           updated_at: string
         }
         Insert: {
           active?: boolean
+          api_key?: string | null
           exhausted_at?: string | null
           key_index: number
           updated_at?: string
         }
         Update: {
           active?: boolean
+          api_key?: string | null
           exhausted_at?: string | null
           key_index?: number
           updated_at?: string
@@ -112,6 +115,52 @@ export type Database = {
           id?: string
         }
         Relationships: []
+      }
+      daily_best_picks: {
+        Row: {
+          combo_prediction_id_1: string | null
+          combo_prediction_id_2: string | null
+          day: string
+          locked_at: string
+          single_prediction_id: string | null
+        }
+        Insert: {
+          combo_prediction_id_1?: string | null
+          combo_prediction_id_2?: string | null
+          day: string
+          locked_at?: string
+          single_prediction_id?: string | null
+        }
+        Update: {
+          combo_prediction_id_1?: string | null
+          combo_prediction_id_2?: string | null
+          day?: string
+          locked_at?: string
+          single_prediction_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_best_picks_combo_prediction_id_1_fkey"
+            columns: ["combo_prediction_id_1"]
+            isOneToOne: false
+            referencedRelation: "predictions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_best_picks_combo_prediction_id_2_fkey"
+            columns: ["combo_prediction_id_2"]
+            isOneToOne: false
+            referencedRelation: "predictions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_best_picks_single_prediction_id_fkey"
+            columns: ["single_prediction_id"]
+            isOneToOne: false
+            referencedRelation: "predictions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       fixtures_cache: {
         Row: {
@@ -154,6 +203,7 @@ export type Database = {
           confidence: number
           created_at: string
           engine: string
+          expected_value: number | null
           ft_status: string | null
           home_score: number | null
           home_team: string
@@ -162,7 +212,9 @@ export type Database = {
           kickoff: string | null
           league_id: string | null
           league_name: string | null
+          market_odds: number | null
           match_id: string | null
+          model_probability: number | null
           prediction_type: string
           projected_corners: number | null
           reasons: Json
@@ -180,6 +232,7 @@ export type Database = {
           confidence: number
           created_at?: string
           engine: string
+          expected_value?: number | null
           ft_status?: string | null
           home_score?: number | null
           home_team: string
@@ -188,7 +241,9 @@ export type Database = {
           kickoff?: string | null
           league_id?: string | null
           league_name?: string | null
+          market_odds?: number | null
           match_id?: string | null
+          model_probability?: number | null
           prediction_type: string
           projected_corners?: number | null
           reasons?: Json
@@ -206,6 +261,7 @@ export type Database = {
           confidence?: number
           created_at?: string
           engine?: string
+          expected_value?: number | null
           ft_status?: string | null
           home_score?: number | null
           home_team?: string
@@ -214,7 +270,9 @@ export type Database = {
           kickoff?: string | null
           league_id?: string | null
           league_name?: string | null
+          market_odds?: number | null
           match_id?: string | null
+          model_probability?: number | null
           prediction_type?: string
           projected_corners?: number | null
           reasons?: Json
