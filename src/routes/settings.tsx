@@ -6,6 +6,7 @@ import { checkApiStatus, setApiKey } from "@/lib/predictions.functions";
 import { CheckCircle2, XCircle, Lock, AlertTriangle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { getEngineSettings, setDataEngine, setSportKeys, setOddsApiKey as setOddsApiKeyFn } from "@/lib/engine-settings.functions";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
@@ -68,6 +69,122 @@ function KeySlotInput({ slot, source }: { slot: 1 | 2; source: "db" | "env" | "n
   );
 }
 
+function DataEngineCard() {
+  const qc = useQueryClient();
+  const fn = useServerFn(getEngineSettings);
+  const setEngineFn = useServerFn(setDataEngine);
+  const setKeysFn = useServerFn(setSportKeys);
+  const setOddsKeyFn = useServerFn(setOddsApiKeyFn);
+
+  const q = useQuery({ queryKey: ["engine-settings"], queryFn: () => fn() });
+  const [sportKeysText, setSportKeysText] = useState("");
+  const [oddsKeyValue, setOddsKeyValue] = useState("");
+  const [savingKeys, setSavingKeys] = useState(false);
+  const [savingOddsKey, setSavingOddsKey] = useState(false);
+
+  const currentEngine = q.data?.dataEngine ?? "isports";
+
+  async function switchEngine(engine: "isports" | "dual_free") {
+    await setEngineFn({ data: { dataEngine: engine } });
+    qc.invalidateQueries({ queryKey: ["engine-settings"] });
+  }
+
+  async function saveSportKeys() {
+    const keys = sportKeysText.split(",").map((s) => s.trim()).filter(Boolean);
+    if (!keys.length) return;
+    setSavingKeys(true);
+    try {
+      await setKeysFn({ data: { sportKeys: keys } });
+      qc.invalidateQueries({ queryKey: ["engine-settings"] });
+    } finally {
+      setSavingKeys(false);
+    }
+  }
+
+  async function saveOddsKey() {
+    if (!oddsKeyValue.trim()) return;
+    setSavingOddsKey(true);
+    try {
+      await setOddsKeyFn({ data: { key: oddsKeyValue.trim() } });
+      setOddsKeyValue("");
+      qc.invalidateQueries({ queryKey: ["engine-settings"] });
+    } finally {
+      setSavingOddsKey(false);
+    }
+  }
+
+  return (
+    <div className="glass rounded-xl p-6 space-y-5">
+      <h2 className="text-sm uppercase tracking-widest text-muted-foreground">Data Engine</h2>
+
+      {q.isLoading ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : (
+        <>
+          <div>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                onClick={() => switchEngine("isports")}
+                className={`px-3 h-8 rounded-md text-xs border transition-colors ${currentEngine === "isports" ? "bg-neon/15 border-neon/50 text-neon" : "border-border text-muted-foreground hover:text-foreground"}`}
+              >
+                iSportsAPI (Statistical Model)
+              </button>
+              <button
+                onClick={() => switchEngine("dual_free")}
+                className={`px-3 h-8 rounded-md text-xs border transition-colors ${currentEngine === "dual_free" ? "bg-gold/15 border-gold/50 text-gold" : "border-border text-muted-foreground hover:text-foreground"}`}
+              >
+                Odds API (Sharp vs Soft)
+              </button>
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Line-shopping against Pinnacle's fair price — a different strategy than the iSports statistical model, not a drop-in replacement for it.
+            </p>
+          </div>
+
+          <div className="space-y-1.5 pt-3 border-t border-border/60">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">ODDS_API_KEY</span>
+              <span className={!q.data?.oddsApiKeyConfigured ? "text-[11px] text-destructive" : "text-[11px] text-neon"}>
+                {q.data?.oddsApiKeySource === "db" ? "Set via this page" : q.data?.oddsApiKeySource === "env" ? "Set via environment variable" : "Not configured"}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <Input
+                type="password"
+                placeholder="Paste The Odds API key (the-odds-api.com)"
+                value={oddsKeyValue}
+                onChange={(e) => setOddsKeyValue(e.target.value)}
+                className="font-mono text-sm"
+              />
+              <Button onClick={saveOddsKey} disabled={savingOddsKey || !oddsKeyValue.trim()} size="sm">
+                {savingOddsKey ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-1.5 pt-3 border-t border-border/60">
+            <span className="text-xs font-medium text-muted-foreground">Sport Keys (comma-separated)</span>
+            <Input
+              placeholder={(q.data?.sportKeys ?? []).join(", ")}
+              value={sportKeysText}
+              onChange={(e) => setSportKeysText(e.target.value)}
+              className="font-mono text-xs"
+            />
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] text-muted-foreground">
+                e.g. soccer_epl, soccer_spain_la_liga — see the-odds-api.com/sports for the full list.
+              </p>
+              <Button onClick={saveSportKeys} disabled={savingKeys || !sportKeysText.trim()} size="sm">
+                {savingKeys ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Settings() {
   const fn = useServerFn(checkApiStatus);
   const q = useQuery({ queryKey: ["api-status"], queryFn: () => fn() });
@@ -95,6 +212,8 @@ function Settings() {
         </div>
       </div>
 
+      <DataEngineCard />
+        
       <div className="glass rounded-xl p-6 space-y-5">
         <h2 className="text-sm uppercase tracking-widest text-muted-foreground">API Keys</h2>
         {q.isLoading ? (
