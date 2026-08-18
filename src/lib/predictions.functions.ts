@@ -689,8 +689,10 @@ export async function lockDailyBestPickIfNeeded(): Promise<void> {
 
   const bestPerMatch = new Map<string, any>();
   for (const p of todaysPicks) {
-    const existing = bestPerMatch.get(p.match_id);
-    if (!existing || Number(p.expected_value) > Number(existing.expected_value)) bestPerMatch.set(p.match_id, p);
+    const key = String(p.match_id ?? p.id);
+    const existing = bestPerMatch.get(key);
+    if (!existing || Number(p.expected_value) > Number(existing.expected_value)) bestPerMatch.set(key, p);
+
   }
   const sorted = Array.from(bestPerMatch.values()).sort((a, b) => Number(b.expected_value) - Number(a.expected_value));
   const single = sorted[0];
