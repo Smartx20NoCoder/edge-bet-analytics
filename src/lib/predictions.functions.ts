@@ -3,6 +3,7 @@ import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { fetchMatchAnalysis, fetchResultsByDate, fetchScheduleByDate, fetchLiveOdds, setForcedKey } from "./isports.server";
 import { gradePrediction, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "./predictions.server";
+import { fetchOddsApiResults } from "./oddsapi.server";
 
 const BLOCKED_KEYWORDS = [
   "friendly", "futsal", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women",
@@ -71,6 +72,10 @@ const RunInput = z.object({
 });
 
 const MATCH_TYPES = new Set(["match_winner","over_2_5_goals"]);
+
+// Odds-API predictions use a UUID event id; iSports predictions use a numeric id.
+// This tells the grading loops below which results source to query per-row.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const runAnalysis = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RunInput.parse(d ?? {}))
@@ -528,8 +533,11 @@ export const updateResults = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     if (!preds || !preds.length) return { updated: 0, skipped: 0, noResultFound: 0 };
 
+    const isportsPreds = preds.filter((p) => !UUID_RE.test(String(p.match_id)));
+    const oddsApiPreds = preds.filter((p) => UUID_RE.test(String(p.match_id)));
+
     const byDate: Record<string, any[]> = {};
-    for (const p of preds) {
+    for (const p of isportsPreds) {
       if (!p.kickoff) continue;
       const d = new Date(p.kickoff).toISOString().slice(0, 10);
       (byDate[d] ??= []).push(p);
@@ -572,6 +580,47 @@ export const updateResults = createServerFn({ method: "POST" })
         updated++;
       }
     }
+
+    // Odds-API predictions: grouped by league_id (which stores the Odds-API sport_key,
+    // e.g. "soccer_epl") — grading goes through /v4/sports/{sport}/scores instead of
+    // iSports' date-based schedule endpoint.
+    const byLeague: Record<string, any[]> = {};
+    for (const p of oddsApiPreds) {
+      const league = String(p.league_id ?? "");
+      if (!league) { noResultFound++; continue; }
+      (byLeague[league] ??= []).push(p);
+    }
+    for (const [sportKey, group] of Object.entries(byLeague)) {
+      let results: Awaited<ReturnType<typeof fetchOddsApiResults>>;
+      try {
+        results = await fetchOddsApiResults(sportKey);
+      } catch (e: any) {
+        failedDates++;
+        console.warn(`[updateResults] oddsapi sportKey=${sportKey} fetch failed, skipping: ${e?.message ?? e}`);
+        continue;
+      }
+      totalResults += results.length;
+      const map = new Map(results.map((r) => [r.matchId, r]));
+      for (const p of group) {
+        const r = map.get(String(p.match_id));
+        if (!r) { noResultFound++; continue; }
+        if (r.homeScore == null && r.awayScore == null) { skipped++; continue; }
+        const correct = gradePrediction(p.prediction_type, p.selection, r);
+        await supabaseAdmin
+          .from("predictions")
+          .update({
+            home_score: r.homeScore,
+            away_score: r.awayScore,
+            total_corners: null,
+            ft_status: r.status,
+            is_correct: correct,
+            results_updated_at: new Date().toISOString(),
+          })
+          .eq("id", p.id);
+        updated++;
+      }
+    }
+
     console.log(`[updateResults] analysisId=${data.analysisId} totalPreds=${preds.length} totalFinishedResults=${totalResults} updated=${updated} skipped=${skipped} noResultFound=${noResultFound} failedDates=${failedDates}`);
     return { updated, skipped, noResultFound, failedDates };
   });
@@ -589,8 +638,11 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
   if (error) throw new Error(error.message);
   if (!preds || !preds.length) return { updated: 0, stillPending: 0, dates: 0, totalScanned: 0 };
 
+  const isportsPreds = preds.filter((p) => !UUID_RE.test(String(p.match_id)));
+  const oddsApiPreds = preds.filter((p) => UUID_RE.test(String(p.match_id)));
+
   const byDate: Record<string, any[]> = {};
-  for (const p of preds) {
+  for (const p of isportsPreds) {
     if (!p.kickoff) continue;
     const d = new Date(p.kickoff).toISOString().slice(0, 10);
     (byDate[d] ??= []).push(p);
@@ -630,8 +682,47 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
       updated++;
     }
   }
-  console.log(`[updateAllPendingResults] scanned=${preds.length} updated=${updated} stillPending=${stillPending} dates=${dates.length} failedDates=${failedDates} forcedKey=${forced ?? "auto"}`);
-  return { updated, stillPending, dates: dates.length, totalScanned: preds.length, failedDates };
+
+  // Odds-API pending predictions, grouped by league_id (sport_key).
+  const byLeague: Record<string, any[]> = {};
+  for (const p of oddsApiPreds) {
+    const league = String(p.league_id ?? "");
+    if (!league) { stillPending++; continue; }
+    (byLeague[league] ??= []).push(p);
+  }
+  const leagueKeys = Object.keys(byLeague);
+  for (const [sportKey, group] of Object.entries(byLeague)) {
+    let results: Awaited<ReturnType<typeof fetchOddsApiResults>>;
+    try {
+      results = await fetchOddsApiResults(sportKey);
+    } catch (e: any) {
+      failedDates++;
+      console.warn(`[updateAllPendingResults] oddsapi sportKey=${sportKey} fetch failed, skipping: ${e?.message ?? e}`);
+      stillPending += group.length;
+      continue;
+    }
+    const map = new Map(results.map((r) => [r.matchId, r]));
+    for (const p of group) {
+      const r = map.get(String(p.match_id));
+      if (!r || (r.homeScore == null && r.awayScore == null)) { stillPending++; continue; }
+      const correct = gradePrediction(p.prediction_type, p.selection, r);
+      await supabaseAdmin
+        .from("predictions")
+        .update({
+          home_score: r.homeScore,
+          away_score: r.awayScore,
+          total_corners: null,
+          ft_status: r.status,
+          is_correct: correct,
+          results_updated_at: new Date().toISOString(),
+        })
+        .eq("id", p.id);
+      updated++;
+    }
+  }
+
+  console.log(`[updateAllPendingResults] scanned=${preds.length} updated=${updated} stillPending=${stillPending} dates=${dates.length + leagueKeys.length} failedDates=${failedDates} forcedKey=${forced ?? "auto"}`);
+  return { updated, stillPending, dates: dates.length + leagueKeys.length, totalScanned: preds.length, failedDates };
   } finally {
     if (forced) setForcedKey(null);
   }
