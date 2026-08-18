@@ -32,7 +32,7 @@ async function getEventsPayload(sportKey: string, markets: string): Promise<any[
   }
   const key = await getApiKey();
   if (!key) throw new Error("ODDS_API_KEY is not configured.");
-  const url = `${BASE}/sports/${sportKey}/odds?apiKey=${key}&regions=eu,uk,us&markets=${markets}&oddsFormat=decimal`;
+  const url = `${BASE}/sports/${sportKey}/odds?apiKey=${key}&regions=eu&markets=${markets}&oddsFormat=decimal`;
   const res = await fetch(url);
   const text = await res.text();
   let json: any;
@@ -61,7 +61,7 @@ export async function fetchOddsApiFixtures(sportKeys: string[]): Promise<OddsApi
   for (const sportKey of sportKeys) {
     let events: any[];
     try {
-      events = await getEventsPayload(sportKey, "h2h,spreads,totals");
+      events = await getEventsPayload(sportKey, "h2h,totals"); // was "h2h,spreads,totals"
     } catch (e: any) {
       console.warn(`[fetchOddsApiFixtures] ${sportKey} failed: ${e?.message ?? e}`);
       continue;
