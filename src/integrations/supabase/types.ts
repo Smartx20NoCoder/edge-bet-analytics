@@ -162,6 +162,30 @@ export type Database = {
           },
         ]
       }
+      engine_settings: {
+        Row: {
+          data_engine: string
+          id: boolean
+          odds_api_key: string | null
+          sport_keys: string[] | null
+          updated_at: string
+        }
+        Insert: {
+          data_engine?: string
+          id?: boolean
+          odds_api_key?: string | null
+          sport_keys?: string[] | null
+          updated_at?: string
+        }
+        Update: {
+          data_engine?: string
+          id?: boolean
+          odds_api_key?: string | null
+          sport_keys?: string[] | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       fixtures_cache: {
         Row: {
           away_team: string | null
