@@ -87,7 +87,34 @@ export const Route = createFileRoute("/api/analyze-stream")({
             const send = (event: string, payload: any) => {
               controller.enqueue(encoder.encode(JSON.stringify({ event, ...payload }) + "\n"));
             };
+            const { data: engineRow } = await supabaseAdmin
+              .from("engine_settings")
+              .select("data_engine, sport_keys")
+              .eq("id", true)
+              .maybeSingle();
+            const dataEngine = (engineRow?.data_engine as string) ?? "isports";
+
+            if (dataEngine === "dual_free") {
+              const { runDualFreeScan } = await import("@/lib/oddsapi.server");
+              try {
+                await runDualFreeScan({
+                  timeframeHours,
+                  maxMatches,
+                  matchWinnerFloor,
+                  over25Floor,
+                  sportKeys: (engineRow?.sport_keys as string[] | null) ?? undefined,
+                  onEvent: send,
+                });
+              } catch (e: any) {
+                send("error", { message: e?.message ?? "dual_free scan failed" });
+              } finally {
+                controller.close();
+              }
+              return;
+            }
+
             try {
+
               if (!process.env.ISPORTS_API_KEY) {
                 send("error", { message: "ISPORTS_API_KEY is not configured on the server. Add it as a secret and retry." });
                 controller.close();
