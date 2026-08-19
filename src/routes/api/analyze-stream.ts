@@ -92,8 +92,11 @@ export const Route = createFileRoute("/api/analyze-stream")({
               .select("data_engine, sport_keys")
               .eq("id", true)
               .maybeSingle();
-            const dataEngine = (engineRow?.data_engine as string) ?? "isports";
-
+            const engineParam = url.searchParams.get("engine");
+            const dataEngine =
+               engineParam === "isports" || engineParam === "dual_free"
+                 ? engineParam
+                 : (engineRow?.data_engine as string) ?? "isports";
             if (dataEngine === "dual_free") {
               const { runDualFreeScan } = await import("@/lib/oddsapi.server");
               try {
@@ -145,7 +148,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
               const afterTrusted = trustedOnly ? afterBlocked.filter((m) => isTrusted(m.leagueName)) : afterBlocked;
 
               send("status", {
-                message: `Filter breakdown — total ${all.length} → future ${futureOnly.length} → within ${timeframeHours}h ${inWindow.length} → eligible leagues (no youth/friendly/cup/qualifier/women/etc) ${afterBlocked.length} → ${trustedOnly ? "major leagues" : "all leagues"} ${afterTrusted.length}.`,
+                message: `Filter breakdown — total${all.length} → future ${futureOnly.length} → within ${timeframeHours}h ${inWindow.length} → eligible leagues (no youth/friendly/cup/qualifier/women/etc) ${afterBlocked.length} → ${trustedOnly ? "major leagues" : "all leagues"} ${afterTrusted.length}.`,
               });
 
               if (!afterTrusted.length) {
