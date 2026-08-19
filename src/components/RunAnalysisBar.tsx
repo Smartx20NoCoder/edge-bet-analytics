@@ -98,7 +98,7 @@ export function RunAnalysisBar() {
     queueMicrotask(() => logEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }));
   };
 
-  const start = async () => {
+  const start = async (engine: "isports" | "dual_free" = "isports") => {
     setOpen(true);
     setRunning(true);
     setLog([]);
@@ -114,6 +114,7 @@ export function RunAnalysisBar() {
       drawRateCeil: String(drawRateCeil / 100),
       over25Floor: String(over25Floor),
       matchWinnerFloor: String(matchWinnerFloor),
+      engine,
     });
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -312,12 +313,19 @@ export function RunAnalysisBar() {
             <Radio className="h-3 w-3" />
             {usage.data?.count ?? "—"}/{usage.data?.limit ?? 200} (Key {usage.data?.activeKey ?? 1})
           </span>
-          <Button onClick={start} disabled={running} className="bg-neon text-neon-foreground hover:bg-neon/90">
+          <Button onClick={() => start("isports")} disabled={running} className="bg-neon text-neon-foreground hover:bg-neon/90">
             {running ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            {running ? "Scanning…" : "Run Analysis"}
+            {running ? "Scanning…" : "Run iSports Scan"}
+            </Button>
+          <Button onClick={() => start("dual_free")} disabled={running} variant="outline" className="border-gold/50 text-gold hover:bg-gold/10">
+            {running ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {running ? "Scanning…" : "Run Odds API Scan"}
           </Button>
         </div>
       </div>
+       <p className="mt-2 text-[10px] text-muted-foreground">
+         Odds API scan pulls leagues configured in Settings → Data Engine and costs API credits per league scanned (Pinnacle-anchored line-shopping, free tier: 500 credits/mo).
+       </p>
 
       <Dialog open={open} onOpenChange={(v) => { if (!running) setOpen(v); }}>
         <DialogContent className="max-w-2xl glass border-neon/20">
