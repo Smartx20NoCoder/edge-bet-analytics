@@ -60,6 +60,12 @@ function isTrusted(name?: string) {
   return TRUSTED_LEAGUE_PATTERNS.some((p) => n.includes(p));
 }
 
+// iSports match ids are purely numeric. Odds API event ids are 32-char hex strings with
+// no hyphens — NOT standard UUIDs — so checking for hyphenated UUID format was wrong and
+// silently misrouted every Odds API prediction into the iSports grading branch, where it
+// could never be found. Numeric-only is the reliable signal.
+const ISPORTS_NUMERIC_RE = /^\d+$/;
+
 const RunInput = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   timeframeHours: z.number().int().min(1).max(48).optional(),
@@ -72,14 +78,6 @@ const RunInput = z.object({
 });
 
 const MATCH_TYPES = new Set(["match_winner","over_2_5_goals"]);
-
-// Odds-API predictions use a UUID event id; iSports predictions use a numeric id.
-// This tells the grading loops below which results source to query per-row.
-// iSports match ids are purely numeric. Odds API event ids are 32-char hex strings with
-// no hyphens — NOT standard UUIDs — so checking for hyphenated UUID format was wrong and
-// silently misrouted every Odds API prediction into the iSports grading branch, where it
-// could never be found. Numeric-only is the reliable signal.
-const ISPORTS_NUMERIC_RE = /^\d+$/;
 
 export const runAnalysis = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RunInput.parse(d ?? {}))
@@ -539,7 +537,7 @@ export const updateResults = createServerFn({ method: "POST" })
 
     const isportsPreds = preds.filter((p) => ISPORTS_NUMERIC_RE.test(String(p.match_id)));
     const oddsApiPreds = preds.filter((p) => !ISPORTS_NUMERIC_RE.test(String(p.match_id)));
-    
+
     const byDate: Record<string, any[]> = {};
     for (const p of isportsPreds) {
       if (!p.kickoff) continue;
@@ -733,16 +731,17 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
 });
 
 // ---- Single / Combo of the Day ----
-// LOCKED the first time a scan produces a qualifying pick for a given day, in
-// daily_best_picks — never recomputed/overwritten by a later same-day scan. Without this,
-// a pick that already lost could get silently swapped out for a later, still-unresolved
-// higher-EV pick, making "Single of the Day: WON" misleading about what was actually
-// knowable/committed at the time. Only ever draws from picks with a real, confirmed
-// market price, non-negative EV, and at/below the EV ceiling (same discipline as
-// elsewhere in this app). Combo is EXPERIMENTAL and tracked completely separately from
-// the validated single-pick stats — see the historical numbers from this exact test: a
-// daily 3-4 leg Match Winner ACCA went 0/14 winning days despite every leg being
-// individually profitable as a single. 2 legs from different matches is the more
+// LOCKED the first time a scan produces a qualifying pick for a given MATCH day (kickoff
+// date) — never recomputed/overwritten once a lock exists for that day. Grouping is done
+// by kickoff date, NOT by when the scan happened to run — a scan run the evening before
+// (e.g. scanning tonight for tomorrow's fixtures) must still correctly lock tomorrow's
+// pick the moment it produces one, rather than getting silently filed under today (the
+// scan's run date) where nothing will ever look for it. Only ever draws from picks with a
+// real, confirmed market price, non-negative EV, and at/below the EV ceiling (same
+// discipline as elsewhere in this app). Combo is EXPERIMENTAL and tracked completely
+// separately from the validated single-pick stats — see the historical numbers from this
+// exact test: a daily 3-4 leg Match Winner ACCA went 0/14 winning days despite every leg
+// being individually profitable as a single. 2 legs from different matches is the more
 // defensible starting point, but this is data-gathering, not a recommendation to stake it.
 //
 // EV ceiling backtest (graded picks, July 12 onward):
@@ -756,51 +755,65 @@ const DAILY_PICK_EV_CEILING = 0.40;
 const DAILY_PICK_TYPES = ["match_winner", "over_2_5_goals", "match_winner_hedged"];
 
 /**
- * Locks in Single/Combo of the Day for `today` (UTC) if not already locked. Called once at
- * the end of every successful scan. A no-op if a lock already exists for today — that's
- * the whole point: the FIRST scan of the day that produces a qualifying pick sets it, and
- * it stays fixed regardless of what later scans that same day find.
+ * Locks in Single/Combo of the Day for every MATCH day (kickoff date) that has qualifying
+ * picks but doesn't have a lock yet. Called once at the end of every successful scan. Looks
+ * back a bounded 45 days to keep the query cheap as the predictions table grows — locks are
+ * meant to be created within a day or two of the scan that produced them anyway, so this
+ * window is generous, not limiting.
  */
 export async function lockDailyBestPickIfNeeded(): Promise<void> {
-  const today = new Date().toISOString().slice(0, 10);
-  const { data: existingLock } = await supabaseAdmin
-    .from("daily_best_picks")
-    .select("day")
-    .eq("day", today)
-    .maybeSingle();
-  if (existingLock) return;
+  const lookbackStart = new Date(Date.now() - 45 * 24 * 3600 * 1000).toISOString();
 
-  const { data: todaysPicks, error } = await supabaseAdmin
+  const { data: candidatePicks, error } = await supabaseAdmin
     .from("predictions")
-    .select("id, match_id, expected_value")
+    .select("id, match_id, expected_value, kickoff")
     .in("prediction_type", DAILY_PICK_TYPES)
     .not("market_odds", "is", null)
+    .not("kickoff", "is", null)
     .gte("expected_value", 0)
     .lte("expected_value", DAILY_PICK_EV_CEILING)
-    .gte("created_at", `${today}T00:00:00.000Z`)
-    .lte("created_at", `${today}T23:59:59.999Z`);
+    .gte("kickoff", lookbackStart);
   if (error) { console.warn(`[lockDailyBestPickIfNeeded] query failed: ${error.message}`); return; }
-  if (!todaysPicks || !todaysPicks.length) return;
+  if (!candidatePicks || !candidatePicks.length) return;
 
-  const bestPerMatch = new Map<string, any>();
-  for (const p of todaysPicks) {
-    const key = String(p.match_id ?? p.id);
-    const existing = bestPerMatch.get(key);
-    if (!existing || Number(p.expected_value) > Number(existing.expected_value)) bestPerMatch.set(key, p);
-
+  const byDay = new Map<string, any[]>();
+  for (const p of candidatePicks) {
+    const day = new Date(p.kickoff).toISOString().slice(0, 10);
+    const list = byDay.get(day);
+    if (list) list.push(p); else byDay.set(day, [p]);
   }
-  const sorted = Array.from(bestPerMatch.values()).sort((a, b) => Number(b.expected_value) - Number(a.expected_value));
-  const single = sorted[0];
-  const comboLeg2 = sorted[1] ?? null;
+  if (!byDay.size) return;
 
-  const { error: insertErr } = await supabaseAdmin.from("daily_best_picks").upsert({
-    day: today,
-    single_prediction_id: single.id,
-    combo_prediction_id_1: single.id,
-    combo_prediction_id_2: comboLeg2 ? comboLeg2.id : null,
-    locked_at: new Date().toISOString(),
-  }, { onConflict: "day", ignoreDuplicates: true });
-  if (insertErr) console.warn(`[lockDailyBestPickIfNeeded] upsert failed: ${insertErr.message}`);
+  const days = Array.from(byDay.keys());
+  const { data: existingLocks } = await supabaseAdmin
+    .from("daily_best_picks")
+    .select("day")
+    .in("day", days);
+  const lockedDays = new Set((existingLocks ?? []).map((l: any) => l.day as string));
+
+  for (const [day, picks] of byDay) {
+    if (lockedDays.has(day)) continue;
+
+    const bestPerMatch = new Map<string, any>();
+    for (const p of picks) {
+      const key = String(p.match_id ?? p.id);
+      const existing = bestPerMatch.get(key);
+      if (!existing || Number(p.expected_value) > Number(existing.expected_value)) bestPerMatch.set(key, p);
+    }
+    const sorted = Array.from(bestPerMatch.values()).sort((a, b) => Number(b.expected_value) - Number(a.expected_value));
+    const single = sorted[0];
+    if (!single) continue;
+    const comboLeg2 = sorted[1] ?? null;
+
+    const { error: insertErr } = await supabaseAdmin.from("daily_best_picks").upsert({
+      day,
+      single_prediction_id: single.id,
+      combo_prediction_id_1: single.id,
+      combo_prediction_id_2: comboLeg2 ? comboLeg2.id : null,
+      locked_at: new Date().toISOString(),
+    }, { onConflict: "day", ignoreDuplicates: true });
+    if (insertErr) console.warn(`[lockDailyBestPickIfNeeded] upsert failed for day=${day}: ${insertErr.message}`);
+  }
 }
 
 export const getDailyPicks = createServerFn({ method: "POST" })
@@ -836,14 +849,15 @@ export const getDailyPicks = createServerFn({ method: "POST" })
       const minDay = days[days.length - 1], maxDay = days[0];
       const { data: dayPicks } = await supabaseAdmin
         .from("predictions")
-        .select("expected_value, created_at")
+        .select("expected_value, kickoff")
         .in("prediction_type", DAILY_PICK_TYPES)
         .not("market_odds", "is", null)
+        .not("kickoff", "is", null)
         .gte("expected_value", 0)
-        .gte("created_at", `${minDay}T00:00:00.000Z`)
-        .lte("created_at", `${maxDay}T23:59:59.999Z`);
+        .gte("kickoff", `${minDay}T00:00:00.000Z`)
+        .lte("kickoff", `${maxDay}T23:59:59.999Z`);
       for (const p of dayPicks ?? []) {
-        const day = new Date(p.created_at).toISOString().slice(0, 10);
+        const day = new Date(p.kickoff).toISOString().slice(0, 10);
         const entry = infoByDay.get(day) ?? { qualifying: 0, excluded: 0 };
         if (Number(p.expected_value) <= DAILY_PICK_EV_CEILING) entry.qualifying++;
         else entry.excluded++;
