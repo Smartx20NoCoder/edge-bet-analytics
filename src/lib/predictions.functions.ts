@@ -75,7 +75,11 @@ const MATCH_TYPES = new Set(["match_winner","over_2_5_goals"]);
 
 // Odds-API predictions use a UUID event id; iSports predictions use a numeric id.
 // This tells the grading loops below which results source to query per-row.
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// iSports match ids are purely numeric. Odds API event ids are 32-char hex strings with
+// no hyphens — NOT standard UUIDs — so checking for hyphenated UUID format was wrong and
+// silently misrouted every Odds API prediction into the iSports grading branch, where it
+// could never be found. Numeric-only is the reliable signal.
+const ISPORTS_NUMERIC_RE = /^\d+$/;
 
 export const runAnalysis = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RunInput.parse(d ?? {}))
@@ -533,9 +537,9 @@ export const updateResults = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     if (!preds || !preds.length) return { updated: 0, skipped: 0, noResultFound: 0 };
 
-    const isportsPreds = preds.filter((p) => !UUID_RE.test(String(p.match_id)));
-    const oddsApiPreds = preds.filter((p) => UUID_RE.test(String(p.match_id)));
-
+    const isportsPreds = preds.filter((p) => ISPORTS_NUMERIC_RE.test(String(p.match_id)));
+    const oddsApiPreds = preds.filter((p) => !ISPORTS_NUMERIC_RE.test(String(p.match_id)));
+    
     const byDate: Record<string, any[]> = {};
     for (const p of isportsPreds) {
       if (!p.kickoff) continue;
@@ -638,8 +642,8 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
   if (error) throw new Error(error.message);
   if (!preds || !preds.length) return { updated: 0, stillPending: 0, dates: 0, totalScanned: 0 };
 
-  const isportsPreds = preds.filter((p) => !UUID_RE.test(String(p.match_id)));
-  const oddsApiPreds = preds.filter((p) => UUID_RE.test(String(p.match_id)));
+  const isportsPreds = preds.filter((p) => ISPORTS_NUMERIC_RE.test(String(p.match_id)));
+  const oddsApiPreds = preds.filter((p) => !ISPORTS_NUMERIC_RE.test(String(p.match_id)));
 
   const byDate: Record<string, any[]> = {};
   for (const p of isportsPreds) {
