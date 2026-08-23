@@ -9,6 +9,18 @@ function median(nums: number[]): number {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
+// A bookmaker's price that hasn't refreshed recently can look like a "discrepancy" against
+// Pinnacle when it's really just stale and about to snap back into line — a classic false
+// positive for sharp-vs-soft comparisons. Every bookmaker object in The Odds API v4's
+// response carries its own `last_update` (ISO 8601). 30 minutes is a starting point, not a
+// tuned number — worth revisiting once real picks accumulate under it.
+const MAX_STALENESS_MINUTES = 30;
+function isFresh(lastUpdate: string | undefined): boolean {
+  if (!lastUpdate) return false;
+  const ageMs = Date.now() - new Date(lastUpdate).getTime();
+  return ageMs >= 0 && ageMs <= MAX_STALENESS_MINUTES * 60 * 1000;
+}
+
 async function getApiKey(): Promise<string | undefined> {
   const { data } = await supabaseAdmin.from("engine_settings").select("odds_api_key").eq("id", true).maybeSingle();
   return (data?.odds_api_key as string | undefined) || process.env.ODDS_API_KEY || undefined;
@@ -61,7 +73,14 @@ export async function fetchOddsApiFixtures(sportKeys: string[]): Promise<OddsApi
   for (const sportKey of sportKeys) {
     let events: any[];
     try {
-      events = await getEventsPayload(sportKey, "h2h,totals"); // was "h2h,spreads,totals"
+      // markets intentionally excludes "spreads" — each additional market multiplies quota
+      // cost (cost = regions × markets per call on The Odds API's free tier), and spreads
+      // was deliberately dropped to keep a full scan around ~24 calls instead of 100+.
+      // This means the +0.5 hedge branch in predictFromSharpFairValue() can never fire
+      // (no spreads data to check) — it gracefully falls back to the plain match_winner
+      // pick instead, which is the accepted tradeoff. Only re-add "spreads" here if the
+      // quota budget is deliberately being loosened again.
+      events = await getEventsPayload(sportKey, "h2h,totals");
     } catch (e: any) {
       console.warn(`[fetchOddsApiFixtures] ${sportKey} failed: ${e?.message ?? e}`);
       continue;
@@ -166,7 +185,10 @@ export function predictFromSharpFairValue(
   const over25Floor = thresholds.over25Floor ?? 55;
   const bookmakers: any[] = Array.isArray(event?.bookmakers) ? event.bookmakers : [];
   const pinnacle = bookmakers.find((b) => b.key === SHARP_BOOK_KEY);
-  if (!pinnacle) return [];
+  // A stale Pinnacle quote is an unreliable fair-value anchor — same principle as the
+  // staleness check on the OTHER bookmakers below, just applied to the reference price
+  // itself. No fresh Pinnacle price, no prediction for this match at all.
+  if (!pinnacle || !isFresh(pinnacle.last_update)) return [];
   const out: OddsApiPrediction[] = [];
 
   const pinH2H = (pinnacle.markets ?? []).find((m: any) => m.key === "h2h");
@@ -182,6 +204,7 @@ export function predictFromSharpFairValue(
       const otherH: number[] = [], otherA: number[] = [];
       for (const bm of bookmakers) {
         if (bm.key === SHARP_BOOK_KEY) continue;
+        if (!isFresh(bm.last_update)) continue; // stale price — excluded from EV comparison
         const mkt = (bm.markets ?? []).find((m: any) => m.key === "h2h");
         if (!mkt) continue;
         const h = Number((mkt.outcomes ?? []).find((o: any) => o.name === homeName)?.price);
@@ -206,7 +229,7 @@ export function predictFromSharpFairValue(
           expected_value: ev,
           reasons: [
             `Pinnacle fair value: H ${(fairH*100).toFixed(0)}% / D ${(fairD*100).toFixed(0)}% / A ${(fairA*100).toFixed(0)}% (from ${pinH.toFixed(2)}/${pinD.toFixed(2)}/${pinA.toFixed(2)} odds).`,
-            `Consensus of ${fv.otherBookCount} other bookmaker(s): ${fv.otherOdds.toFixed(2)} odds for ${selection}.`,
+            `Consensus of ${fv.otherBookCount} other fresh bookmaker(s) (updated within ${MAX_STALENESS_MINUTES}m): ${fv.otherOdds.toFixed(2)} odds for ${selection}.`,
             `EV = (${(fairProb*100).toFixed(1)}% Pinnacle-fair prob × ${fv.otherOdds.toFixed(2)} consensus odds) − 1 = ${(ev*100).toFixed(1)}%.`,
             "Line-shopping strategy (sharp vs soft), not an independent stats-based prediction.",
           ],
@@ -221,6 +244,7 @@ export function predictFromSharpFairValue(
             const otherPlus: number[] = [];
             for (const bm of bookmakers) {
               if (bm.key === SHARP_BOOK_KEY) continue;
+              if (!isFresh(bm.last_update)) continue;
               const mkt = (bm.markets ?? []).find((m: any) => m.key === "spreads");
               const o = (mkt?.outcomes ?? []).find((x: any) => x.name === (homeFav ? homeName : awayName) && Math.abs(Number(x.point) - 0.5) < 0.001);
               const price = Number(o?.price);
@@ -258,6 +282,7 @@ export function predictFromSharpFairValue(
       const otherOver: number[] = [];
       for (const bm of bookmakers) {
         if (bm.key === SHARP_BOOK_KEY) continue;
+        if (!isFresh(bm.last_update)) continue;
         const mkt = (bm.markets ?? []).find((m: any) => m.key === "totals");
         const o = (mkt?.outcomes ?? []).find((x: any) => x.name === "Over" && Math.abs(Number(x.point) - 2.5) < 0.001);
         const price = Number(o?.price);
@@ -276,7 +301,7 @@ export function predictFromSharpFairValue(
           expected_value: ev,
           reasons: [
             `Pinnacle fair value @ 2.5 line: Over ${(fairOver*100).toFixed(0)}% (from ${pinOver.toFixed(2)}/${pinUnder.toFixed(2)} odds).`,
-            `Consensus of ${otherOver.length} other bookmaker(s): ${consensusOdds.toFixed(2)} odds for Over 2.5.`,
+            `Consensus of ${otherOver.length} other fresh bookmaker(s) (updated within ${MAX_STALENESS_MINUTES}m): ${consensusOdds.toFixed(2)} odds for Over 2.5.`,
             `EV = (${(fairOver*100).toFixed(1)}% Pinnacle-fair prob × ${consensusOdds.toFixed(2)} consensus odds) − 1 = ${(ev*100).toFixed(1)}%.`,
             "Line-shopping strategy (sharp vs soft), not an independent stats-based prediction.",
           ],
