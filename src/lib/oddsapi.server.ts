@@ -73,14 +73,13 @@ export async function fetchOddsApiFixtures(sportKeys: string[]): Promise<OddsApi
   for (const sportKey of sportKeys) {
     let events: any[];
     try {
-      // markets intentionally excludes "spreads" — each additional market multiplies quota
-      // cost (cost = regions × markets per call on The Odds API's free tier), and spreads
-      // was deliberately dropped to keep a full scan around ~24 calls instead of 100+.
-      // This means the +0.5 hedge branch in predictFromSharpFairValue() can never fire
-      // (no spreads data to check) — it gracefully falls back to the plain match_winner
-      // pick instead, which is the accepted tradeoff. Only re-add "spreads" here if the
-      // quota budget is deliberately being loosened again.
-      events = await getEventsPayload(sportKey, "h2h,totals");
+      // markets is h2h only now — totals was dropped (never produced a single Over 2.5
+      // pick since this engine went live; Pinnacle/EU bookmakers apparently don't reliably
+      // quote exactly the 2.5 line this needs, likely due to floating "main" totals per
+      // match rather than a full ladder of lines) and spreads was already excluded for
+      // quota reasons — see the note below. h2h-only roughly halves the remaining cost
+      // again (1 market × 1 region instead of 2 × 1 per league).
+      events = await getEventsPayload(sportKey, "h2h");
     } catch (e: any) {
       console.warn(`[fetchOddsApiFixtures] ${sportKey} failed: ${e?.message ?? e}`);
       continue;
@@ -165,7 +164,7 @@ function computeFairValue(pinnacleOdds: number | undefined, otherOddsForSameSide
 }
 
 export type OddsApiPrediction = {
-  prediction_type: "match_winner" | "over_2_5_goals" | "match_winner_hedged";
+  prediction_type: "match_winner" | "match_winner_hedged";
   selection: string;
   confidence: number;
   market_odds: number;
@@ -179,10 +178,9 @@ export function predictFromSharpFairValue(
   event: any,
   homeName: string,
   awayName: string,
-  thresholds: { matchWinnerFloor?: number; over25Floor?: number } = {},
+  thresholds: { matchWinnerFloor?: number } = {},
 ): OddsApiPrediction[] {
   const matchWinnerFloor = thresholds.matchWinnerFloor ?? 49;
-  const over25Floor = thresholds.over25Floor ?? 55;
   const bookmakers: any[] = Array.isArray(event?.bookmakers) ? event.bookmakers : [];
   const pinnacle = bookmakers.find((b) => b.key === SHARP_BOOK_KEY);
   // A stale Pinnacle quote is an unreliable fair-value anchor — same principle as the
@@ -271,45 +269,10 @@ export function predictFromSharpFairValue(
     }
   }
 
-  const pinTotals = (pinnacle.markets ?? []).find((m: any) => m.key === "totals");
-  if (pinTotals) {
-    const overOut = (pinTotals.outcomes ?? []).find((o: any) => o.name === "Over" && Math.abs(Number(o.point) - 2.5) < 0.001);
-    const underOut = (pinTotals.outcomes ?? []).find((o: any) => o.name === "Under" && Math.abs(Number(o.point) - 2.5) < 0.001);
-    const pinOver = Number(overOut?.price), pinUnder = Number(underOut?.price);
-    if (pinOver >= 1.01 && pinUnder >= 1.01) {
-      const iO = 1 / pinOver, iU = 1 / pinUnder;
-      const fairOver = iO / (iO + iU);
-      const otherOver: number[] = [];
-      for (const bm of bookmakers) {
-        if (bm.key === SHARP_BOOK_KEY) continue;
-        if (!isFresh(bm.last_update)) continue;
-        const mkt = (bm.markets ?? []).find((m: any) => m.key === "totals");
-        const o = (mkt?.outcomes ?? []).find((x: any) => x.name === "Over" && Math.abs(Number(x.point) - 2.5) < 0.001);
-        const price = Number(o?.price);
-        if (price >= 1.01) otherOver.push(price);
-      }
-      const confidence = Math.round(fairOver * 1000) / 10;
-      if (otherOver.length >= 2 && confidence >= over25Floor) {
-        const consensusOdds = median(otherOver);
-        const ev = Math.round((fairOver * consensusOdds - 1) * 10000) / 10000;
-        out.push({
-          prediction_type: "over_2_5_goals",
-          selection: "Over 2.5 Goals",
-          confidence,
-          market_odds: consensusOdds,
-          model_probability: fairOver,
-          expected_value: ev,
-          reasons: [
-            `Pinnacle fair value @ 2.5 line: Over ${(fairOver*100).toFixed(0)}% (from ${pinOver.toFixed(2)}/${pinUnder.toFixed(2)} odds).`,
-            `Consensus of ${otherOver.length} other fresh bookmaker(s) (updated within ${MAX_STALENESS_MINUTES}m): ${consensusOdds.toFixed(2)} odds for Over 2.5.`,
-            `EV = (${(fairOver*100).toFixed(1)}% Pinnacle-fair prob × ${consensusOdds.toFixed(2)} consensus odds) − 1 = ${(ev*100).toFixed(1)}%.`,
-            "Line-shopping strategy (sharp vs soft), not an independent stats-based prediction.",
-          ],
-          stats: { engine: "oddsapi_sharp_fair_value", fairOver, pinnacleOdds: { pinOver, pinUnder } },
-        });
-      }
-    }
-  }
+  // Over 2.5 Goals (totals) removed — never produced a single pick since this engine went
+  // live, and the market fetch itself was dropped to save quota (see fetchOddsApiFixtures).
+  // match_winner (+hedge, currently dormant since spreads is also unfetched) is the only
+  // market this engine evaluates now.
   return out;
 }
 
@@ -394,7 +357,6 @@ export async function runDualFreeScan(opts: {
     try {
       const preds = predictFromSharpFairValue(m.raw, m.homeName, m.awayName, {
         matchWinnerFloor: opts.matchWinnerFloor,
-        over25Floor: opts.over25Floor,
       });
       for (const p of preds) {
         allPreds.push({
