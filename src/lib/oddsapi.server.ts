@@ -26,6 +26,20 @@ async function getApiKey(): Promise<string | undefined> {
   return (data?.odds_api_key as string | undefined) || process.env.ODDS_API_KEY || undefined;
 }
 
+// Same preventive spacing added to isports.server.ts after real scan failures there —
+// applied here proactively, before The Odds API has actually thrown an error, since the
+// league count just grew and sequential unspaced calls are exactly what caused the
+// iSportsAPI issue. 350ms matches the same conservative default; not a documented Odds
+// API limit, just consistent precaution.
+const MIN_CALL_INTERVAL_MS = 350;
+let lastCallAt = 0;
+function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
+async function throttle() {
+  const wait = lastCallAt + MIN_CALL_INTERVAL_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastCallAt = Date.now();
+}
+
 export async function getSportKeys(): Promise<string[]> {
   const { data } = await supabaseAdmin.from("engine_settings").select("sport_keys").eq("id", true).maybeSingle();
   const keys = data?.sport_keys as string[] | null;
@@ -45,8 +59,19 @@ async function getEventsPayload(sportKey: string, markets: string): Promise<any[
   const key = await getApiKey();
   if (!key) throw new Error("ODDS_API_KEY is not configured.");
   const url = `${BASE}/sports/${sportKey}/odds?apiKey=${key}&regions=eu&markets=${markets}&oddsFormat=decimal`;
-  const res = await fetch(url);
-  const text = await res.text();
+
+  const BACKOFFS_MS = [500, 1000, 2000];
+  let res: Response, text: string;
+  let attempt = 0;
+  while (true) {
+    await throttle();
+    res = await fetch(url);
+    text = await res.text();
+    if (res.status !== 429 || attempt >= BACKOFFS_MS.length) break;
+    console.warn(`[oddsapi] ${sportKey} rate-limited, retrying in ${BACKOFFS_MS[attempt]}ms (attempt ${attempt + 1}/${BACKOFFS_MS.length})`);
+    await sleep(BACKOFFS_MS[attempt]);
+    attempt++;
+  }
   let json: any;
   try { json = JSON.parse(text); } catch {
     throw new Error(`OddsAPI /sports/${sportKey}/odds: non-JSON response (HTTP ${res.status})`);
@@ -288,6 +313,7 @@ export async function fetchOddsApiResults(sportKey: string, daysFrom = 3): Promi
     const key = await getApiKey();
     if (!key) throw new Error("ODDS_API_KEY is not configured.");
     const url = `${BASE}/sports/${sportKey}/scores?apiKey=${key}&daysFrom=${daysFrom}&dateFormat=iso`;
+    await throttle();
     const res = await fetch(url);
     const text = await res.text();
     try { json = JSON.parse(text); } catch { throw new Error(`OddsAPI /sports/${sportKey}/scores: non-JSON response (HTTP ${res.status})`); }
@@ -304,11 +330,19 @@ export async function fetchOddsApiResults(sportKey: string, daysFrom = 3): Promi
     });
 }
 
+// 16 leagues total, deliberately capped there: at markets=h2h/regions=eu (1 quota unit
+// per league) and once-daily scanning, 16 x 30 days = 480/month — safely under the 500
+// free-tier cap, with margin. All ~40 real domestic leagues available would cost
+// 1,200+/month; this list adds 4 to the original 12, chosen for the strongest expected
+// signal (per the "smaller/less-liquid markets hold real Pinnacle-vs-soft divergence
+// longer" theory) rather than expanding all at once. Add more only after confirming this
+// batch shows something, and recheck the budget math before doing so.
 const DEFAULT_SPORT_KEYS = [
   "soccer_epl", "soccer_spain_la_liga", "soccer_italy_serie_a", "soccer_germany_bundesliga",
   "soccer_france_ligue_one", "soccer_netherlands_eredivisie", "soccer_portugal_primeira_liga",
   "soccer_usa_mls", "soccer_brazil_campeonato", "soccer_argentina_primera_division",
   "soccer_efl_champ", "soccer_uefa_champs_league_qualification",
+  "soccer_poland_ekstraklasa", "soccer_italy_serie_b", "soccer_germany_bundesliga2", "soccer_belgium_first_div",
 ];
 
 export async function runDualFreeScan(opts: {
