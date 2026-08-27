@@ -21,9 +21,94 @@ function isFresh(lastUpdate: string | undefined): boolean {
   return ageMs >= 0 && ageMs <= MAX_STALENESS_MINUTES * 60 * 1000;
 }
 
-async function getApiKey(): Promise<string | undefined> {
-  const { data } = await supabaseAdmin.from("engine_settings").select("odds_api_key").eq("id", true).maybeSingle();
-  return (data?.odds_api_key as string | undefined) || process.env.ODDS_API_KEY || undefined;
+// ---- Multi-key rotation ----
+// Supports N rotating keys (2 today, expandable to 3+) instead of a single key. The Odds
+// API's free tier resets MONTHLY, not daily like iSportsAPI's trial — exhaustion tracking
+// here is month-keyed, not UTC-day-keyed. Detection uses the `x-requests-remaining`
+// response header The Odds API returns on every call (0 or missing-with-401 = exhausted)
+// rather than a body-level code, since that's the documented mechanism for this API.
+type OddsKeyEntry = { key: string; exhausted_at: string | null };
+
+function monthKey(d: Date): string {
+  return `${d.getUTCFullYear()}-${d.getUTCMonth()}`;
+}
+
+async function getKeyEntries(): Promise<OddsKeyEntry[]> {
+  const { data } = await supabaseAdmin.from("engine_settings").select("odds_api_keys, odds_api_key").eq("id", true).maybeSingle();
+  let entries: OddsKeyEntry[] = Array.isArray(data?.odds_api_keys) ? data!.odds_api_keys as OddsKeyEntry[] : [];
+  if (!entries.length && data?.odds_api_key) entries = [{ key: data.odds_api_key as string, exhausted_at: null }];
+  if (!entries.length && process.env.ODDS_API_KEY) entries = [{ key: process.env.ODDS_API_KEY, exhausted_at: null }];
+
+  // Monthly auto-reset: clear any exhausted flag from a previous calendar month.
+  const thisMonth = monthKey(new Date());
+  const toReset = entries.filter((e) => e.exhausted_at && monthKey(new Date(e.exhausted_at)) !== thisMonth);
+  if (toReset.length) {
+    entries = entries.map((e) => (toReset.includes(e) ? { ...e, exhausted_at: null } : e));
+    await supabaseAdmin.from("engine_settings").upsert({ id: true, odds_api_keys: entries, updated_at: new Date().toISOString() });
+    console.log(`[oddsapi] monthly reset applied to ${toReset.length} key(s)`);
+  }
+  return entries;
+}
+
+async function markKeyExhausted(key: string): Promise<void> {
+  const entries = await getKeyEntries();
+  const updated = entries.map((e) => (e.key === key ? { ...e, exhausted_at: new Date().toISOString() } : e));
+  await supabaseAdmin.from("engine_settings").upsert({ id: true, odds_api_keys: updated, updated_at: new Date().toISOString() });
+}
+
+/** Ordered list of currently-usable (non-exhausted) keys to try, in order. */
+async function getAvailableKeys(): Promise<string[]> {
+  const entries = await getKeyEntries();
+  return entries.filter((e) => !e.exhausted_at).map((e) => e.key);
+}
+
+export async function setOddsApiKeys(keys: string[]): Promise<void> {
+  const cleaned = keys.map((k) => k.trim()).filter(Boolean);
+  const entries: OddsKeyEntry[] = cleaned.map((key) => ({ key, exhausted_at: null }));
+  await supabaseAdmin.from("engine_settings").upsert({ id: true, odds_api_keys: entries, updated_at: new Date().toISOString() });
+}
+
+export async function getOddsApiKeysStatus(): Promise<{ totalKeys: number; availableKeys: number; exhaustedKeys: number }> {
+  const entries = await getKeyEntries();
+  const exhausted = entries.filter((e) => e.exhausted_at).length;
+  return { totalKeys: entries.length, availableKeys: entries.length - exhausted, exhaustedKeys: exhausted };
+}
+
+/** Fetches a URL (with `{key}` substituted per attempt), rotating through available keys
+ * on quota exhaustion. Rate-limit (429) retries the SAME key with backoff — switching keys
+ * doesn't fix a rate limit, which is IP-scoped, not key-scoped. Quota exhaustion (detected
+ * via the x-requests-remaining header, or a 401 with no remaining) rotates to the next key
+ * and marks the exhausted one so it's skipped for the rest of the calendar month. */
+async function fetchWithKeyRotation(buildUrl: (key: string) => string, label: string): Promise<{ res: Response; text: string }> {
+  const keys = await getAvailableKeys();
+  if (!keys.length) throw new Error("No Odds API keys configured or all are exhausted for this month.");
+
+  const BACKOFFS_MS = [500, 1000, 2000];
+  let lastErr = "";
+  for (const key of keys) {
+    let attempt = 0;
+    while (true) {
+      await throttle();
+      const res = await fetch(buildUrl(key));
+      const text = await res.text();
+      const remaining = res.headers.get("x-requests-remaining");
+      const quotaExhausted = (remaining !== null && Number(remaining) <= 0) || (res.status === 401 && remaining === null);
+      if (quotaExhausted) {
+        console.warn(`[oddsapi] ${label} key exhausted (remaining=${remaining ?? "n/a"}, status=${res.status}) — rotating to next key.`);
+        await markKeyExhausted(key);
+        lastErr = `key exhausted`;
+        break; // try next key
+      }
+      if (res.status === 429 && attempt < BACKOFFS_MS.length) {
+        console.warn(`[oddsapi] ${label} rate-limited, retrying in ${BACKOFFS_MS[attempt]}ms (attempt ${attempt + 1}/${BACKOFFS_MS.length})`);
+        await sleep(BACKOFFS_MS[attempt]);
+        attempt++;
+        continue;
+      }
+      return { res, text }; // success or a non-quota/non-rate-limit failure — return as-is
+    }
+  }
+  throw new Error(`OddsAPI ${label}: all ${keys.length} key(s) exhausted for this month (${lastErr}).`);
 }
 
 // Same preventive spacing added to isports.server.ts after real scan failures there —
@@ -56,22 +141,10 @@ async function getEventsPayload(sportKey: string, markets: string): Promise<any[
   if (cached && Date.now() - new Date(cached.fetched_at).getTime() < 6 * 3600 * 1000) {
     return cached.raw as any[];
   }
-  const key = await getApiKey();
-  if (!key) throw new Error("ODDS_API_KEY is not configured.");
-  const url = `${BASE}/sports/${sportKey}/odds?apiKey=${key}&regions=eu&markets=${markets}&oddsFormat=decimal`;
-
-  const BACKOFFS_MS = [500, 1000, 2000];
-  let res: Response, text: string;
-  let attempt = 0;
-  while (true) {
-    await throttle();
-    res = await fetch(url);
-    text = await res.text();
-    if (res.status !== 429 || attempt >= BACKOFFS_MS.length) break;
-    console.warn(`[oddsapi] ${sportKey} rate-limited, retrying in ${BACKOFFS_MS[attempt]}ms (attempt ${attempt + 1}/${BACKOFFS_MS.length})`);
-    await sleep(BACKOFFS_MS[attempt]);
-    attempt++;
-  }
+  const { res, text } = await fetchWithKeyRotation(
+    (key) => `${BASE}/sports/${sportKey}/odds?apiKey=${key}&regions=eu&markets=${markets}&oddsFormat=decimal`,
+    `/sports/${sportKey}/odds`,
+  );
   let json: any;
   try { json = JSON.parse(text); } catch {
     throw new Error(`OddsAPI /sports/${sportKey}/odds: non-JSON response (HTTP ${res.status})`);
@@ -310,12 +383,10 @@ export async function fetchOddsApiResults(sportKey: string, daysFrom = 3): Promi
   if (cached && Date.now() - new Date(cached.fetched_at).getTime() < 30 * 60 * 1000) {
     json = cached.raw as any[];
   } else {
-    const key = await getApiKey();
-    if (!key) throw new Error("ODDS_API_KEY is not configured.");
-    const url = `${BASE}/sports/${sportKey}/scores?apiKey=${key}&daysFrom=${daysFrom}&dateFormat=iso`;
-    await throttle();
-    const res = await fetch(url);
-    const text = await res.text();
+    const { res, text } = await fetchWithKeyRotation(
+      (key) => `${BASE}/sports/${sportKey}/scores?apiKey=${key}&daysFrom=${daysFrom}&dateFormat=iso`,
+      `/sports/${sportKey}/scores`,
+    );
     try { json = JSON.parse(text); } catch { throw new Error(`OddsAPI /sports/${sportKey}/scores: non-JSON response (HTTP ${res.status})`); }
     if (!res.ok) throw new Error(`OddsAPI /sports/${sportKey}/scores: HTTP ${res.status}`);
     await supabaseAdmin.from("analysis_cache").upsert({ match_id: cacheKey, raw: json, fetched_at: new Date().toISOString() });
@@ -330,19 +401,26 @@ export async function fetchOddsApiResults(sportKey: string, daysFrom = 3): Promi
     });
 }
 
-// 16 leagues total, deliberately capped there: at markets=h2h/regions=eu (1 quota unit
-// per league) and once-daily scanning, 16 x 30 days = 480/month — safely under the 500
-// free-tier cap, with margin. All ~40 real domestic leagues available would cost
-// 1,200+/month; this list adds 4 to the original 12, chosen for the strongest expected
-// signal (per the "smaller/less-liquid markets hold real Pinnacle-vs-soft divergence
-// longer" theory) rather than expanding all at once. Add more only after confirming this
-// batch shows something, and recheck the budget math before doing so.
+// ALL real domestic non-cup, non-international soccer leagues from The Odds API's
+// in-season list — cups (FA Cup, DFB Pokal, Copa Libertadores/Sudamericana, Leagues Cup)
+// and international competitions (Nations League) are still excluded, same reasoning as
+// the isports engine: thinner/less consistent bookmaker coverage on those.
+// 40 leagues x 30 days once-daily = 1,200/month. At 2 keys (1,000/month) this runs slightly
+// short near month-end until reset — not catastrophic, just occasional late-month gaps. At
+// 3 keys (1,500/month) it fits with ~300/month headroom. Recheck this math before scanning
+// more than once/day or before dropping to fewer than 3 keys.
 const DEFAULT_SPORT_KEYS = [
   "soccer_epl", "soccer_spain_la_liga", "soccer_italy_serie_a", "soccer_germany_bundesliga",
   "soccer_france_ligue_one", "soccer_netherlands_eredivisie", "soccer_portugal_primeira_liga",
   "soccer_usa_mls", "soccer_brazil_campeonato", "soccer_argentina_primera_division",
   "soccer_efl_champ", "soccer_uefa_champs_league_qualification",
   "soccer_poland_ekstraklasa", "soccer_italy_serie_b", "soccer_germany_bundesliga2", "soccer_belgium_first_div",
+  "soccer_austria_bundesliga", "soccer_brazil_serie_b", "soccer_chile_campeonato", "soccer_china_superleague",
+  "soccer_denmark_superliga", "soccer_england_league1", "soccer_england_league2", "soccer_finland_veikkausliiga",
+  "soccer_france_ligue_two", "soccer_germany_liga3", "soccer_greece_super_league", "soccer_japan_j_league",
+  "soccer_korea_kleague1", "soccer_league_of_ireland", "soccer_mexico_ligamx", "soccer_norway_eliteserien",
+  "soccer_russia_premier_league", "soccer_saudi_arabia_pro_league", "soccer_spain_segunda_division", "soccer_spl",
+  "soccer_sweden_allsvenskan", "soccer_sweden_superettan", "soccer_switzerland_superleague", "soccer_turkey_super_league",
 ];
 
 export async function runDualFreeScan(opts: {
@@ -449,15 +527,19 @@ export async function runDualFreeScan(opts: {
   return { analysisId: analysisRow.id, matchesAnalyzed: finalCandidates.length, predictionsGenerated: allPreds.length };
 }
 
+/** Kept for backward compatibility with any existing caller — reports whether ANY key is
+ * available, backed by the new rotation system rather than a single stored key. */
 export async function getOddsApiKeyStatus(): Promise<{ hasKey: boolean; source: "db" | "env" | "none" }> {
-  const { data } = await supabaseAdmin.from("engine_settings").select("odds_api_key").eq("id", true).maybeSingle();
-  if (data?.odds_api_key) return { hasKey: true, source: "db" };
+  const status = await getOddsApiKeysStatus();
+  if (status.availableKeys > 0) return { hasKey: true, source: "db" };
   if (process.env.ODDS_API_KEY) return { hasKey: true, source: "env" };
   return { hasKey: false, source: "none" };
 }
 
+/** Kept for backward compatibility — sets a single key. For the multi-key rotation this
+ * module now supports, use setOddsApiKeys([...]) instead. */
 export async function setOddsApiKey(key: string): Promise<void> {
-  await supabaseAdmin.from("engine_settings").upsert({ id: true, odds_api_key: key.trim() || null, updated_at: new Date().toISOString() });
+  await setOddsApiKeys([key]);
 }
 
 export { DEFAULT_SPORT_KEYS };
