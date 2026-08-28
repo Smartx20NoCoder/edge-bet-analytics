@@ -6,7 +6,8 @@ import { checkApiStatus, setApiKey } from "@/lib/predictions.functions";
 import { CheckCircle2, XCircle, Lock, AlertTriangle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { getEngineSettings, setDataEngine, setSportKeys, setOddsApiKey as setOddsApiKeyFn } from "@/lib/engine-settings.functions";
+import { Textarea } from "@/components/ui/textarea";
+import { getEngineSettings, setDataEngine, setSportKeys, setOddsApiKeysList } from "@/lib/engine-settings.functions";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
@@ -74,13 +75,14 @@ function DataEngineCard() {
   const fn = useServerFn(getEngineSettings);
   const setEngineFn = useServerFn(setDataEngine);
   const setKeysFn = useServerFn(setSportKeys);
-  const setOddsKeyFn = useServerFn(setOddsApiKeyFn);
+  const setOddsKeysFn = useServerFn(setOddsApiKeysList);
 
   const q = useQuery({ queryKey: ["engine-settings"], queryFn: () => fn() });
   const [sportKeysText, setSportKeysText] = useState("");
-  const [oddsKeyValue, setOddsKeyValue] = useState("");
+  const [oddsKeysText, setOddsKeysText] = useState("");
   const [savingKeys, setSavingKeys] = useState(false);
-  const [savingOddsKey, setSavingOddsKey] = useState(false);
+  const [savingOddsKeys, setSavingOddsKeys] = useState(false);
+  const [oddsKeysSavedAt, setOddsKeysSavedAt] = useState<number | null>(null);
 
   const currentEngine = q.data?.dataEngine ?? "isports";
 
@@ -101,15 +103,17 @@ function DataEngineCard() {
     }
   }
 
-  async function saveOddsKey() {
-    if (!oddsKeyValue.trim()) return;
-    setSavingOddsKey(true);
+  async function saveOddsKeys() {
+    const keys = oddsKeysText.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (!keys.length) return;
+    setSavingOddsKeys(true);
     try {
-      await setOddsKeyFn({ data: { key: oddsKeyValue.trim() } });
-      setOddsKeyValue("");
+      await setOddsKeysFn({ data: { keys } });
+      setOddsKeysText("");
+      setOddsKeysSavedAt(Date.now());
       qc.invalidateQueries({ queryKey: ["engine-settings"] });
     } finally {
-      setSavingOddsKey(false);
+      setSavingOddsKeys(false);
     }
   }
 
@@ -143,23 +147,30 @@ function DataEngineCard() {
 
           <div className="space-y-1.5 pt-3 border-t border-border/60">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground">ODDS_API_KEY</span>
-              <span className={!q.data?.oddsApiKeyConfigured ? "text-[11px] text-destructive" : "text-[11px] text-neon"}>
-                {q.data?.oddsApiKeySource === "db" ? "Set via this page" : q.data?.oddsApiKeySource === "env" ? "Set via environment variable" : "Not configured"}
+              <span className="text-xs font-medium text-muted-foreground">Odds API Keys (rotation)</span>
+              <span className={(q.data?.oddsApiAvailableKeys ?? 0) === 0 ? "text-[11px] text-destructive" : "text-[11px] text-neon"}>
+                {q.data?.oddsApiTotalKeys
+                  ? `${q.data.oddsApiAvailableKeys} of ${q.data.oddsApiTotalKeys} available${q.data.oddsApiExhaustedKeys ? ` (${q.data.oddsApiExhaustedKeys} exhausted this month)` : ""}`
+                  : "None configured"}
               </span>
             </div>
-            <div className="flex gap-2">
-              <Input
-                type="password"
-                placeholder="Paste The Odds API key (the-odds-api.com)"
-                value={oddsKeyValue}
-                onChange={(e) => setOddsKeyValue(e.target.value)}
-                className="font-mono text-sm"
-              />
-              <Button onClick={saveOddsKey} disabled={savingOddsKey || !oddsKeyValue.trim()} size="sm">
-                {savingOddsKey ? "Saving…" : "Save"}
+            <Textarea
+              placeholder={"Paste one key per line — replaces the entire list on save.\ne.g.\nabc123...\ndef456..."}
+              value={oddsKeysText}
+              onChange={(e) => setOddsKeysText(e.target.value)}
+              className="font-mono text-xs min-h-[80px]"
+            />
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] text-muted-foreground">
+                Supports rotation across multiple keys (currently used for a 2-key, 1,000/month combined setup — add a 3rd line for 1,500/month). Saving replaces the whole list, so paste ALL keys you want active, not just a new one.
+              </p>
+              <Button onClick={saveOddsKeys} disabled={savingOddsKeys || !oddsKeysText.trim()} size="sm">
+                {savingOddsKeys ? "Saving…" : "Save"}
               </Button>
             </div>
+            {oddsKeysSavedAt && Date.now() - oddsKeysSavedAt < 4000 && (
+              <p className="text-[11px] text-neon">Saved. Key list replaced — a scan will confirm which are usable.</p>
+            )}
           </div>
 
           <div className="space-y-1.5 pt-3 border-t border-border/60">
