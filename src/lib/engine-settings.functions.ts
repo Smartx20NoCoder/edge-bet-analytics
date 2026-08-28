@@ -3,14 +3,15 @@ import { z } from "zod";
 
 export const getEngineSettings = createServerFn({ method: "GET" }).handler(async () => {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const { getOddsApiKeyStatus, DEFAULT_SPORT_KEYS } = await import("./oddsapi.server");
+  const { getOddsApiKeysStatus, DEFAULT_SPORT_KEYS } = await import("./oddsapi.server");
   const { data } = await supabaseAdmin.from("engine_settings").select("*").eq("id", true).maybeSingle();
-  const oddsKeyStatus = await getOddsApiKeyStatus();
+  const oddsKeysStatus = await getOddsApiKeysStatus();
   return {
     dataEngine: (data?.data_engine as "isports" | "dual_free") ?? "isports",
     sportKeys: (data?.sport_keys as string[] | null) ?? DEFAULT_SPORT_KEYS,
-    oddsApiKeyConfigured: oddsKeyStatus.hasKey,
-    oddsApiKeySource: oddsKeyStatus.source,
+    oddsApiTotalKeys: oddsKeysStatus.totalKeys,
+    oddsApiAvailableKeys: oddsKeysStatus.availableKeys,
+    oddsApiExhaustedKeys: oddsKeysStatus.exhaustedKeys,
   };
 });
 
@@ -30,10 +31,15 @@ export const setSportKeys = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-export const setOddsApiKey = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => z.object({ key: z.string().max(200) }).parse(d))
+// Replaces the ENTIRE key list with the given keys (not additive) — matches how the
+// Settings UI textarea works: paste all your keys, one per line, and save. This resets
+// each key's exhausted_at to null (a freshly-saved key is assumed usable), which is
+// correct for adding a new key but means re-saving an already-exhausted key here will
+// make it look available again until the next real quota check fails.
+export const setOddsApiKeysList = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ keys: z.array(z.string().min(1)).max(10) }).parse(d))
   .handler(async ({ data }) => {
-    const { setOddsApiKey: setOddsApiKeyImpl } = await import("./oddsapi.server");
-    await setOddsApiKeyImpl(data.key);
+    const { setOddsApiKeys } = await import("./oddsapi.server");
+    await setOddsApiKeys(data.keys);
     return { ok: true };
   });
