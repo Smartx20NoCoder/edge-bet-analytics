@@ -3,6 +3,8 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { fetchMatchAnalysis, fetchScheduleByDate, fetchLiveOdds, setForcedKey } from "@/lib/isports.server";
 import { gradePrediction as _g, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "@/lib/predictions.server";
 import { lockDailyBestPickIfNeeded } from "@/lib/predictions.functions";
+import { runDualFreeScan } from "@/lib/oddsapi.server";
+import { getEngineSettings } from "@/lib/engine-settings.functions";
 
 const BLOCKED_KEYWORDS = [
   "friendly", "futsal", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women",
@@ -87,36 +89,30 @@ export const Route = createFileRoute("/api/analyze-stream")({
             const send = (event: string, payload: any) => {
               controller.enqueue(encoder.encode(JSON.stringify({ event, ...payload }) + "\n"));
             };
-            const { data: engineRow } = await supabaseAdmin
-              .from("engine_settings")
-              .select("data_engine, sport_keys")
-              .eq("id", true)
-              .maybeSingle();
-            const engineParam = url.searchParams.get("engine");
-            const dataEngine =
-               engineParam === "isports" || engineParam === "dual_free"
-                 ? engineParam
-                 : (engineRow?.data_engine as string) ?? "isports";
-            if (dataEngine === "dual_free") {
-              const { runDualFreeScan } = await import("@/lib/oddsapi.server");
-              try {
-                await runDualFreeScan({
-                  timeframeHours,
-                  maxMatches,
-                  matchWinnerFloor,
-                  over25Floor,
-                  sportKeys: (engineRow?.sport_keys as string[] | null) ?? undefined,
-                  onEvent: send,
-                });
-              } catch (e: any) {
-                send("error", { message: e?.message ?? "dual_free scan failed" });
-              } finally {
-                controller.close();
-              }
-              return;
-            }
-
             try {
+              // ---- dual_free branch: completely separate code path, zero effect on the
+              // isports logic below it. Checked first so an engine misconfiguration can't
+              // accidentally fall through into the isports flow (e.g. missing ISPORTS_API_KEY
+              // would incorrectly error out a dual_free scan otherwise).
+              const engineSettings = await getEngineSettings();
+              if (engineSettings.dataEngine === "dual_free") {
+                try {
+                  await runDualFreeScan({
+                    timeframeHours,
+                    maxMatches,
+                    matchWinnerFloor,
+                    over25Floor,
+                    minOdds,
+                    maxOdds,
+                    onEvent: send,
+                  });
+                } catch (e: any) {
+                  send("error", { message: e?.message ?? "dual_free scan failed" });
+                } finally {
+                  controller.close();
+                }
+                return;
+              }
 
               if (!process.env.ISPORTS_API_KEY) {
                 send("error", { message: "ISPORTS_API_KEY is not configured on the server. Add it as a secret and retry." });
@@ -148,7 +144,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
               const afterTrusted = trustedOnly ? afterBlocked.filter((m) => isTrusted(m.leagueName)) : afterBlocked;
 
               send("status", {
-                message: `Filter breakdown — total${all.length} → future ${futureOnly.length} → within ${timeframeHours}h ${inWindow.length} → eligible leagues (no youth/friendly/cup/qualifier/women/etc) ${afterBlocked.length} → ${trustedOnly ? "major leagues" : "all leagues"} ${afterTrusted.length}.`,
+                message: `Filter breakdown — total ${all.length} → future ${futureOnly.length} → within ${timeframeHours}h ${inWindow.length} → eligible leagues (no youth/friendly/cup/qualifier/women/etc) ${afterBlocked.length} → ${trustedOnly ? "major leagues" : "all leagues"} ${afterTrusted.length}.`,
               });
 
               if (!afterTrusted.length) {
@@ -263,10 +259,6 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     error: e?.message ?? "failed",
                   });
                 }
-                // Staggered pause between matches on top of the low-level request throttle —
-                // gives the trial iSportsAPI tier room to breathe so scans complete fully
-                // instead of stalling/rushing partway through on larger match counts.
-                await new Promise((r) => setTimeout(r, 1000));
               }
 
               send("status", { message: "Generating final predictions…" });
@@ -402,8 +394,6 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 .from("predictions")
                 .insert(finalPreds.map((p) => ({ ...p, analysis_id: analysisRow.id })));
 
-              // Lock Single/Combo of the Day for today if not already locked — see
-              // predictions.functions.ts for why this must never overwrite an existing lock.
               await lockDailyBestPickIfNeeded();
 
               send("done", {
