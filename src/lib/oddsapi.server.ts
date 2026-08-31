@@ -166,9 +166,16 @@ export type OddsApiFixture = {
   raw: any;
 };
 
-export async function fetchOddsApiFixtures(sportKeys: string[]): Promise<OddsApiFixture[]> {
+export async function fetchOddsApiFixtures(
+  sportKeys: string[],
+  onEvent?: (evt: string, payload: any) => void,
+): Promise<OddsApiFixture[]> {
+  const send = onEvent ?? (() => {});
   const out: OddsApiFixture[] = [];
+  let i = 0;
   for (const sportKey of sportKeys) {
+    i++;
+    send("status", { message: `Fetching fixtures+odds: league ${i}/${sportKeys.length} (${sportKey})…` });
     let events: any[];
     try {
       // markets is h2h only now — totals was dropped (never produced a single Over 2.5
@@ -180,6 +187,7 @@ export async function fetchOddsApiFixtures(sportKeys: string[]): Promise<OddsApi
       events = await getEventsPayload(sportKey, "h2h");
     } catch (e: any) {
       console.warn(`[fetchOddsApiFixtures] ${sportKey} failed: ${e?.message ?? e}`);
+      send("status", { message: `League ${sportKey} failed: ${e?.message ?? e} — skipping.` });
       continue;
     }
     for (const ev of events) {
@@ -256,9 +264,14 @@ const SHARP_BOOK_KEY = "pinnacle";
 
 type FairValueSide = { fairOdds: number; fairProb: number; otherOdds: number; otherBookCount: number };
 
+// Best (max) price among fresh, non-Pinnacle bookmakers — not the median. Line-shopping
+// means finding the SINGLE best price you could actually bet at; averaging several books
+// together dilutes exactly the standout price this strategy is meant to catch. The
+// staleness filter already guards against a "best" price actually being a stale/erroneous
+// outlier, which was the main risk of moving off median.
 function computeFairValue(pinnacleOdds: number | undefined, otherOddsForSameSide: number[]): FairValueSide | undefined {
   if (!pinnacleOdds || pinnacleOdds < 1.01 || otherOddsForSameSide.length < 2) return undefined;
-  return { fairOdds: pinnacleOdds, fairProb: 1 / pinnacleOdds, otherOdds: median(otherOddsForSameSide), otherBookCount: otherOddsForSameSide.length };
+  return { fairOdds: pinnacleOdds, fairProb: 1 / pinnacleOdds, otherOdds: Math.max(...otherOddsForSameSide), otherBookCount: otherOddsForSameSide.length };
 }
 
 export type OddsApiPrediction = {
@@ -348,7 +361,7 @@ export function predictFromSharpFairValue(
             }
             if (pinPlusOdds >= 1.01 && otherPlus.length >= 2) {
               const pWinOrDraw = homeFav ? fairH + fairD : fairA + fairD;
-              const otherPlusMedian = median(otherPlus);
+              const otherPlusMedian = Math.max(...otherPlus); // best available, same reasoning as computeFairValue
               const ahEv = Math.round((pWinOrDraw * otherPlusMedian - 1) * 10000) / 10000;
               out.push({
                 prediction_type: "match_winner_hedged",
@@ -428,14 +441,18 @@ export async function runDualFreeScan(opts: {
   maxMatches: number;
   matchWinnerFloor?: number;
   over25Floor?: number;
+  minOdds?: number;
+  maxOdds?: number;
   sportKeys?: string[];
   onEvent?: (evt: string, payload: any) => void;
 }): Promise<{ analysisId: string | null; matchesAnalyzed: number; predictionsGenerated: number }> {
   const sportKeys = opts.sportKeys ?? (await getSportKeys());
   const send = opts.onEvent ?? (() => {});
+  const minOdds = opts.minOdds ?? 1.5; // matches the isports engine's own default floor
+  const maxOdds = opts.maxOdds ?? 100;
   send("status", { message: `Fetching fixtures+odds for ${sportKeys.length} leagues via The Odds API…` });
 
-  const fixtures = await fetchOddsApiFixtures(sportKeys);
+  const fixtures = await fetchOddsApiFixtures(sportKeys, send);
   const now = Date.now();
   const windowEnd = now + opts.timeframeHours * 3600 * 1000;
   const candidates = fixtures
@@ -469,7 +486,7 @@ export async function runDualFreeScan(opts: {
     try {
       const preds = predictFromSharpFairValue(m.raw, m.homeName, m.awayName, {
         matchWinnerFloor: opts.matchWinnerFloor,
-      });
+      }).filter((p) => p.market_odds >= minOdds && p.market_odds <= maxOdds);
       for (const p of preds) {
         allPreds.push({
           engine: "match",
