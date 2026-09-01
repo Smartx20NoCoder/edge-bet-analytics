@@ -117,8 +117,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 }
                 return;
               }
-            
-            try {
+          
 
               if (!process.env.ISPORTS_API_KEY) {
                 send("error", { message: "ISPORTS_API_KEY is not configured on the server. Add it as a secret and retry." });
