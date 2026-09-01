@@ -167,6 +167,7 @@ export type Database = {
           data_engine: string
           id: boolean
           odds_api_key: string | null
+          odds_api_keys: Json | null
           sport_keys: string[] | null
           updated_at: string
         }
@@ -174,6 +175,7 @@ export type Database = {
           data_engine?: string
           id?: boolean
           odds_api_key?: string | null
+          odds_api_keys?: Json | null
           sport_keys?: string[] | null
           updated_at?: string
         }
@@ -181,6 +183,7 @@ export type Database = {
           data_engine?: string
           id?: boolean
           odds_api_key?: string | null
+          odds_api_keys?: Json | null
           sport_keys?: string[] | null
           updated_at?: string
         }
