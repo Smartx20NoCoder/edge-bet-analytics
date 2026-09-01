@@ -4,7 +4,6 @@ import { fetchMatchAnalysis, fetchScheduleByDate, fetchLiveOdds, setForcedKey } 
 import { gradePrediction as _g, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "@/lib/predictions.server";
 import { lockDailyBestPickIfNeeded } from "@/lib/predictions.functions";
 import { runDualFreeScan } from "@/lib/oddsapi.server";
-import { getEngineSettings } from "@/lib/engine-settings.functions";
 
 const BLOCKED_KEYWORDS = [
   "friendly", "futsal", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women",
@@ -118,6 +117,8 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 }
                 return;
               }
+            
+            try {
 
               if (!process.env.ISPORTS_API_KEY) {
                 send("error", { message: "ISPORTS_API_KEY is not configured on the server. Add it as a secret and retry." });
