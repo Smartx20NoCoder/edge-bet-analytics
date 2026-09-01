@@ -89,14 +89,19 @@ export const Route = createFileRoute("/api/analyze-stream")({
             const send = (event: string, payload: any) => {
               controller.enqueue(encoder.encode(JSON.stringify({ event, ...payload }) + "\n"));
             };
-            try {
-              // ---- dual_free branch: completely separate code path, zero effect on the
-              // isports logic below it. Checked first so an engine misconfiguration can't
-              // accidentally fall through into the isports flow (e.g. missing ISPORTS_API_KEY
-              // would incorrectly error out a dual_free scan otherwise).
-              const engineSettings = await getEngineSettings();
-              if (engineSettings.dataEngine === "dual_free") {
-                try {
+            const { data: engineRow } = await supabaseAdmin
+              .from("engine_settings")
+              .select("data_engine, sport_keys")
+              .eq("id", true)
+              .maybeSingle();
+            const engineParam = url.searchParams.get("engine");
+            const dataEngine =
+               engineParam === "isports" || engineParam === "dual_free"
+                 ? engineParam
+                 : (engineRow?.data_engine as string) ?? "isports";
+            if (dataEngine === "dual_free") {
+              const { runDualFreeScan } = await import("@/lib/oddsapi.server");
+              try {
                   await runDualFreeScan({
                     timeframeHours,
                     maxMatches,
