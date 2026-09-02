@@ -3,8 +3,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { fetchMatchAnalysis, fetchScheduleByDate, fetchLiveOdds, setForcedKey } from "@/lib/isports.server";
 import { gradePrediction as _g, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "@/lib/predictions.server";
 import { lockDailyBestPickIfNeeded } from "@/lib/predictions.functions";
-import { runDualFreeScan } from "@/lib/oddsapi.server";
-import { getEngineSettings } from "@/lib/engine-settings.functions";
+import { runDualFreeScan, getOddsApiKeysStatus } from "@/lib/oddsapi.server";
 
 const BLOCKED_KEYWORDS = [
   "friendly", "futsal", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women",
@@ -35,19 +34,19 @@ const MINOR_QUALIFIERS = [
   "state league", "npl", "county", "district", "metro",
   "nsw", "vic", "qld", " sa ", " wa ", "tas", "act", " nt ",
 ];
-function hasTierNumber(name: string): boolean {
+function hasTierNumber(name) {
   return /\b[2-9]\b\s*$/.test(name.trim());
 }
-function isWomensFixture(homeName?: string, awayName?: string): boolean {
-  const check = (n?: string) => {
+function isWomensFixture(homeName, awayName) {
+  const check = (n) => {
     if (!n) return false;
     const s = n.toLowerCase();
     return /\(w\)\s*$/i.test(n.trim()) || s.includes("women") || s.includes("ladies") || s.includes("féminine") || s.includes("frauen") || s.includes("damen");
   };
   return check(homeName) || check(awayName);
 }
-const isBlocked = (n?: string) => !n || BLOCKED_KEYWORDS.some((k) => n.toLowerCase().includes(k)) || hasTierNumber(n);
-const isTrusted = (n?: string) => {
+const isBlocked = (n) => !n || BLOCKED_KEYWORDS.some((k) => n.toLowerCase().includes(k)) || hasTierNumber(n);
+const isTrusted = (n) => {
   if (!n) return false;
   const lower = n.toLowerCase();
   if (MINOR_QUALIFIERS.some((q) => lower.includes(q))) return false;
@@ -66,13 +65,13 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const minOdds = Number(url.searchParams.get("minOdds") ?? 1);
         const trustedOnly = url.searchParams.get("trustedOnly") !== "false";
         const refresh = url.searchParams.get("refresh") === "true";
-        const VALID_BET_TYPES = ["all","match_winner","over_2_5_goals"] as const;
+        const VALID_BET_TYPES = ["all","match_winner","over_2_5_goals"];
         const rawBet = (url.searchParams.get("betType") ?? "all").toLowerCase();
-        const betType = (VALID_BET_TYPES as readonly string[]).includes(rawBet) ? rawBet : "all";
+        const betType = VALID_BET_TYPES.includes(rawBet) ? rawBet : "all";
         const runCorners = false;
         const runMatch = true;
         const apiKeyParam = url.searchParams.get("apiKey");
-        const forcedKey: 1 | 2 | null = apiKeyParam === "1" ? 1 : apiKeyParam === "2" ? 2 : null;
+        const forcedKey = apiKeyParam === "1" ? 1 : apiKeyParam === "2" ? 2 : null;
         const maxOdds = Number(url.searchParams.get("maxOdds") ?? 100);
         const winRateFloor = Math.max(0, Math.min(1, Number(url.searchParams.get("winRateFloor") ?? 0.45)));
         const drawRateCeil = Math.max(0, Math.min(1, Number(url.searchParams.get("drawRateCeil") ?? 0.35)));
@@ -86,51 +85,36 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
           async start(controller) {
-            const send = (event: string, payload: any) => {
+            const send = (event, payload) => {
               controller.enqueue(encoder.encode(JSON.stringify({ event, ...payload }) + "\n"));
             };
-            try {
-              // ---- dual_free branch: completely separate code path, zero effect on the
-              // isports logic below it. Checked first so an engine misconfiguration can't
-              // accidentally fall through into the isports flow (e.g. missing ISPORTS_API_KEY
-              // would incorrectly error out a dual_free scan otherwise).
-              const engineSettings = await getEngineSettings();
-              if (engineSettings.dataEngine === "dual_free") {
-                try {
-                  await runDualFreeScan({
-                    timeframeHours,
-                    maxMatches,
-                    matchWinnerFloor,
-                    over25Floor,
-                    minOdds,
-                    maxOdds,
-                    onEvent: send,
-                  });
-                } catch (e: any) {
-                  send("error", { message: e?.message ?? "dual_free scan failed" });
-                } finally {
-                  controller.close();
-                }
-                return;
-              }
 
-              if (!process.env.ISPORTS_API_KEY) {
-                send("error", { message: "ISPORTS_API_KEY is not configured on the server. Add it as a secret and retry." });
-                controller.close();
-                return;
-              }
+            const isportsAvailable = !!process.env.ISPORTS_API_KEY;
+            let oddsApiAvailable = false;
+            try {
+              oddsApiAvailable = (await getOddsApiKeysStatus()).availableKeys > 0;
+            } catch (e) {
+              console.warn(`[analyze-stream] odds api key status check failed: ${e?.message ?? e}`);
+            }
+
+            if (!isportsAvailable && !oddsApiAvailable) {
+              send("error", { message: "No data source is configured — set an iSportsAPI key and/or Odds API key(s) in Settings." });
+              controller.close();
+              return;
+            }
+
+            async function runIsportsScan() {
               if (forcedKey) {
                 setForcedKey(forcedKey);
                 send("status", { message: `Using API Key ${forcedKey} only (manual override — failover disabled).` });
               }
 
               send("status", { message: `Fetching fixtures for ${date}…` });
-              let all: Awaited<ReturnType<typeof fetchScheduleByDate>>;
+              let all;
               try {
                 all = await fetchScheduleByDate(date);
-              } catch (e: any) {
-                send("error", { message: `Schedule fetch failed: ${e?.message ?? e}` });
-                controller.close();
+              } catch (e) {
+                send("status", { message: `iSportsAPI schedule fetch failed: ${e?.message ?? e}` });
                 return;
               }
               send("status", { message: `iSportsAPI returned ${all.length} total fixtures for ${date}.` });
@@ -151,8 +135,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 const hint = trustedOnly
                   ? "Try unchecking 'Major leagues only' or widening the timeframe."
                   : "Try widening the timeframe or picking a different date.";
-                send("error", { message: `No qualifying matches after filters. ${hint}` });
-                controller.close();
+                send("status", { message: `iSportsAPI: no qualifying matches after filters. ${hint}` });
                 return;
               }
 
@@ -166,7 +149,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   .from("predictions")
                   .select("match_id")
                   .in("match_id", ids);
-                const existingSet = new Set((existing ?? []).map((r: any) => String(r.match_id)));
+                const existingSet = new Set((existing ?? []).map((r) => String(r.match_id)));
                 candidates = initialCandidates.filter((c) => !existingSet.has(String(c.matchId)));
                 skippedExisting = initialCandidates.length - candidates.length;
                 if (skippedExisting) {
@@ -174,8 +157,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 }
               }
               if (!candidates.length) {
-                send("error", { message: `All ${initialCandidates.length} qualifying matches were already predicted in earlier scans. Try a different date or timeframe.` });
-                controller.close();
+                send("status", { message: `iSportsAPI: all ${initialCandidates.length} qualifying matches were already predicted in earlier scans.` });
                 return;
               }
               send("status", {
@@ -185,8 +167,8 @@ export const Route = createFileRoute("/api/analyze-stream")({
 
               const scanStartedAt = new Date().toISOString();
 
-              const predictions: any[] = [];
-              const seen = new Set<string>();
+              const predictions = [];
+              const seen = new Set();
               for (let i = 0; i < candidates.length; i++) {
                 const m = candidates[i];
                 if (seen.has(String(m.matchId))) {
@@ -216,10 +198,10 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   });
                   const corners = runCorners ? predictCorners(analysis, m.homeId, m.awayId, cornerThresholds) : [];
                   const matchPredsRaw = runMatch
-                    ? predictMatchOutcomes(analysis, m.homeId, m.awayId, matchThresholds, (m.raw as any)?.homeRank, (m.raw as any)?.awayRank)
+                    ? predictMatchOutcomes(analysis, m.homeId, m.awayId, matchThresholds, (m.raw)?.homeRank, (m.raw)?.awayRank)
                     : [];
                   const matchPreds = betType === "all" ? matchPredsRaw : matchPredsRaw.filter((p) => p.type === betType);
-                  const collected: any[] = [];
+                  const collected = [];
                   for (const c of corners) collected.push({
                     engine: "corners", prediction_type: c.type, selection: c.selection,
                     projected_corners: c.projectedCorners, confidence: c.confidence,
@@ -231,7 +213,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     confidence: p.confidence, risk_level: p.riskLevel, reasons: p.reasons,
                     stats: p.stats,
                     recommendation: p.expectedValue !== undefined
-                      ? `Lean ${p.selection} — ${p.expectedValue >= 0 ? "+" : ""}${(p.expectedValue * 100).toFixed(1)}% edge at ${p.marketOdds!.toFixed(2)} odds.`
+                      ? `Lean ${p.selection} — ${p.expectedValue >= 0 ? "+" : ""}${(p.expectedValue * 100).toFixed(1)}% edge at ${p.marketOdds.toFixed(2)} odds.`
                       : `Lean ${p.selection} (${p.confidence}% model confidence, no market price).`,
                     market_odds: p.marketOdds ?? null,
                     model_probability: p.modelProbability ?? null,
@@ -252,7 +234,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     home: m.homeName, away: m.awayName,
                     picks: kept,
                   });
-                } catch (e: any) {
+                } catch (e) {
                   send("match_error", {
                     index: i + 1, total: candidates.length,
                     home: m.homeName, away: m.awayName,
@@ -262,7 +244,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
               // Staggered pause between matches on top of the low-level request throttle —
               // gives the trial iSportsAPI tier room to breathe so scans complete fully
               // instead of stalling/rushing partway through on larger match counts.
-              await new Promise((r) => setTimeout(r, 1000));                
+              await new Promise((r) => setTimeout(r, 1000));                                
               }
 
               send("status", { message: "Generating final predictions…" });
@@ -285,14 +267,14 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   return Number(b.confidence) - Number(a.confidence);
                 });
 
-              const liveOddsByMatch = new Map<string, Awaited<ReturnType<typeof fetchLiveOdds>>>();
+              const liveOddsByMatch = new Map();
               const uniqueMatchIds = Array.from(new Set(passedThreshold.map((p) => String(p.match_id))));
               for (const mid of uniqueMatchIds) {
                 liveOddsByMatch.set(mid, await fetchLiveOdds(mid));
               }
               let noOddsCount = 0;
               let hedgedCount = 0;
-              const finalPreds: any[] = passedThreshold.map((p) => {
+              const finalPreds = passedThreshold.map((p) => {
                 const live = liveOddsByMatch.get(String(p.match_id));
                 const modelProbability = p.model_probability != null ? Number(p.model_probability) : null;
 
@@ -365,18 +347,13 @@ export const Route = createFileRoute("/api/analyze-stream")({
               }
 
               if (!finalPreds.length) {
-                send("done", {
-                  analysisId: null,
-                  matchesAnalyzed: candidates.length,
-                  predictionsGenerated: 0,
-                  date,
-                });
+                send("status", { message: "iSportsAPI: no predictions generated this scan." });
                 return;
               }
 
               const avg = finalPreds.reduce((s, p) => s + Number(p.confidence), 0) / finalPreds.length;
               const distinctLeagues = new Set(
-                candidates.map((c) => c.leagueName).filter(Boolean) as string[],
+                candidates.map((c) => c.leagueName).filter(Boolean),
               ).size;
 
               const { data: analysisRow, error: aErr } = await supabaseAdmin
@@ -392,7 +369,10 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 })
                 .select()
                 .single();
-              if (aErr || !analysisRow) throw new Error(aErr?.message ?? "analysis insert failed");
+              if (aErr || !analysisRow) {
+                send("status", { message: `iSportsAPI: failed to save scan: ${aErr?.message ?? "unknown error"}` });
+                return;
+              }
 
               await supabaseAdmin
                 .from("predictions")
@@ -400,16 +380,44 @@ export const Route = createFileRoute("/api/analyze-stream")({
 
               await lockDailyBestPickIfNeeded();
 
-              send("done", {
+              send("status", {
+                message: `iSportsAPI scan complete: ${finalPreds.length} prediction(s) from ${candidates.length} matches.`,
                 analysisId: analysisRow.id,
-                matchesAnalyzed: candidates.length,
-                predictionsGenerated: finalPreds.length,
-                date,
               });
-            } catch (e: any) {
+              if (forcedKey) setForcedKey(null);
+            }
+
+            try {
+              if (isportsAvailable) {
+                send("status", { message: "— iSportsAPI scan starting —" });
+                await runIsportsScan();
+              } else {
+                send("status", { message: "iSportsAPI not configured — skipping." });
+              }
+
+              if (oddsApiAvailable) {
+                send("status", { message: "— Odds API (sharp-vs-soft) scan starting —" });
+                try {
+                  await runDualFreeScan({
+                    timeframeHours,
+                    maxMatches,
+                    matchWinnerFloor,
+                    over25Floor,
+                    minOdds,
+                    maxOdds,
+                    onEvent: send,
+                  });
+                } catch (e) {
+                  send("status", { message: `Odds API scan failed: ${e?.message ?? e} — iSportsAPI results (if any) are unaffected.` });
+                }
+              } else {
+                send("status", { message: "Odds API not configured — skipping." });
+              }
+
+              send("done", { message: "Scan complete." });
+            } catch (e) {
               send("error", { message: e?.message ?? "scan failed" });
             } finally {
-              if (forcedKey) setForcedKey(null);
               controller.close();
             }
           },
