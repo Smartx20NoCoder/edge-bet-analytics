@@ -3,7 +3,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getAnalyses, getPredictions, updateAllPendingResults } from "@/lib/predictions.functions";
 import { useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, Loader2, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Loader2, RefreshCw, TrendingUp } from "lucide-react";
 import { PredictionCard, type Prediction } from "@/components/PredictionCard";
 import { ScanScorecard } from "@/components/ScanScorecard";
 import { LeagueScopeBadge } from "@/components/LeagueScopeBadge";
@@ -33,6 +33,21 @@ function formatScanLabel(iso: string): string {
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
   return `${dd} ${mon} ${yyyy} · ${hh}:${mm}`;
+}
+
+function DataEngineBadge({ engine }: { engine?: "isports" | "dual_free" | null }) {
+  if (!engine) return null;
+  const isIsports = engine === "isports";
+  return (
+    <span
+      className={`inline-flex items-center px-2 h-6 rounded-md border text-[11px] font-medium ${
+        isIsports ? "border-neon/40 bg-neon/10 text-neon" : "border-gold/40 bg-gold/10 text-gold"
+      }`}
+      title={isIsports ? "iSportsAPI — statistical model" : "Odds API — sharp-vs-soft line shopping"}
+    >
+      {isIsports ? "iSportsAPI" : "Odds API"}
+    </span>
+  );
 }
 
 // Scanner now only generates match_winner and over_2_5_goals — the two bet types with a
@@ -69,8 +84,6 @@ const PAGE_SIZES = [50, 100] as const;
 
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
-// Build "last 12 months" options as {label, from, to} — from/to are YYYY-MM-DD strings
-// covering the full calendar month, computed in local time.
 function buildMonthOptions() {
   const opts: { label: string; from: string; to: string }[] = [];
   const now = new Date();
@@ -95,7 +108,7 @@ function HistoryPage() {
   const [pageSize, setPageSize] = useState<50 | 100>(50);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [selectedMonth, setSelectedMonth] = useState(""); // empty = "All time" / custom range
+  const [selectedMonth, setSelectedMonth] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState("all");
   const [evFilter, setEvFilter] = useState("all");
@@ -137,7 +150,7 @@ function HistoryPage() {
 
   const changePageSize = (size: 50 | 100) => {
     setPageSize(size);
-    setPage(1); // page size change resets to page 1, since offsets no longer line up
+    setPage(1);
   };
 
   return (
@@ -272,6 +285,18 @@ function HistoryItem({ a, open, onToggle, fp, typeFilter, evFilter }: any) {
           <div className="text-xs text-muted-foreground">{a.predictions_generated} pick{a.predictions_generated === 1 ? "" : "s"} · {a.matches_analyzed} match{a.matches_analyzed === 1 ? "" : "es"} analysed</div>
         </div>
         <div className="flex items-center gap-3">
+          {/* Always visible, regardless of any active filter — this is the count that was
+              previously invisible unless the Positive EV filter button was already
+              selected (matching_count below still exists for that filtered-view case). */}
+          <span
+            className={`inline-flex items-center gap-1 px-2 h-6 rounded-md border text-[11px] font-mono ${
+              (a.positive_ev_count ?? 0) > 0 ? "border-neon/40 bg-neon/10 text-neon" : "border-border text-muted-foreground"
+            }`}
+            title="Picks with positive expected value in this scan"
+          >
+            <TrendingUp className="h-3 w-3" />
+            {a.positive_ev_count ?? 0} +EV
+          </span>
           {filterActive && (
             <span className={`inline-flex items-center gap-1 px-2 h-6 rounded-md border text-[11px] font-mono ${
               a.matching_count > 0 ? "border-gold/40 bg-gold/10 text-gold" : "border-border text-muted-foreground"
@@ -279,6 +304,7 @@ function HistoryItem({ a, open, onToggle, fp, typeFilter, evFilter }: any) {
               {a.matching_count ?? 0} match{a.matching_count === 1 ? "" : "es"}
             </span>
           )}
+          <DataEngineBadge engine={a.data_engine} />
           <LeagueScopeBadge scope={a.league_scope} />
           <ScanScorecard total={a.score_total ?? a.predictions_generated ?? 0} won={a.score_won ?? 0} pending={a.score_pending ?? 0} />
           <div className="text-right">
