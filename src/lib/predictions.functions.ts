@@ -308,7 +308,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
         predictions_generated: finalPreds.length,
         avg_confidence: Math.round(avg * 100) / 100,
         status: "completed",
-        notes: JSON.stringify({ date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount }),
+        notes: JSON.stringify({ engine: "isports", date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount }),
       })
       .select()
       .single();
@@ -355,13 +355,20 @@ export const getAnalyses = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     let analyses: any[] = (rows ?? []).map((a: any) => {
       let leagueScope: "major" | "all" | null = null;
+      // Tags which engine produced this scan (isports / dual_free) so the UI can badge
+      // each row — the Odds API scan already self-tagged this in its notes; the iSports
+      // scan path was updated to do the same for parity.
+      let dataEngine: "isports" | "dual_free" | null = null;
       try {
         const parsed = a.notes ? JSON.parse(a.notes) : null;
         if (parsed && typeof parsed.trustedOnly === "boolean") {
           leagueScope = parsed.trustedOnly ? "major" : "all";
         }
+        if (parsed && (parsed.engine === "isports" || parsed.engine === "dual_free")) {
+          dataEngine = parsed.engine;
+        }
       } catch {}
-      return { ...a, league_scope: leagueScope };
+      return { ...a, league_scope: leagueScope, data_engine: dataEngine };
     });
     const ids = analyses.map((a) => a.id);
     if (ids.length) {
@@ -371,7 +378,7 @@ export const getAnalyses = createServerFn({ method: "POST" })
         .in("analysis_id", ids);
       if (data.engine) pq = pq.eq("engine", data.engine);
       const { data: preds } = await pq;
-      const counts: Record<string, { n: number; sum: number; won: number; lost: number; pending: number; matching: number }> = {};
+      const counts: Record<string, { n: number; sum: number; won: number; lost: number; pending: number; matching: number; positiveEv: number }> = {};
       const typeFilter = data.typeFilter ?? "all";
       const evFilter = data.evFilter ?? "all";
       const matchesFilters = (p: any) => {
@@ -387,7 +394,7 @@ export const getAnalyses = createServerFn({ method: "POST" })
       };
       for (const p of preds ?? []) {
         const k = (p as any).analysis_id;
-        counts[k] ??= { n: 0, sum: 0, won: 0, lost: 0, pending: 0, matching: 0 };
+        counts[k] ??= { n: 0, sum: 0, won: 0, lost: 0, pending: 0, matching: 0, positiveEv: 0 };
         counts[k].n++;
         counts[k].sum += Number((p as any).confidence);
         const ic = (p as any).is_correct;
@@ -395,6 +402,11 @@ export const getAnalyses = createServerFn({ method: "POST" })
         else if (ic === false) counts[k].lost++;
         else counts[k].pending++;
         if (matchesFilters(p)) counts[k].matching++;
+        // Always computed, independent of any active filter — the row badge should show
+        // "how many positive-EV picks in this scan" without requiring the person to have
+        // the Positive EV filter button selected first.
+        const ev = (p as any).expected_value != null ? Number((p as any).expected_value) : null;
+        if (ev != null && ev >= 0) counts[k].positiveEv++;
       }
       if (data.engine) {
         analyses = analyses
@@ -407,6 +419,7 @@ export const getAnalyses = createServerFn({ method: "POST" })
             score_won: counts[a.id].won,
             score_pending: counts[a.id].pending,
             matching_count: counts[a.id].matching,
+            positive_ev_count: counts[a.id].positiveEv,
           }));
       } else {
         analyses = analyses.map((a) => {
@@ -417,6 +430,7 @@ export const getAnalyses = createServerFn({ method: "POST" })
             score_won: c?.won ?? 0,
             score_pending: c?.pending ?? 0,
             matching_count: c?.matching ?? 0,
+            positive_ev_count: c?.positiveEv ?? 0,
           };
         });
       }
@@ -583,9 +597,6 @@ export const updateResults = createServerFn({ method: "POST" })
       }
     }
 
-    // Odds-API predictions: grouped by league_id (which stores the Odds-API sport_key,
-    // e.g. "soccer_epl") — grading goes through /v4/sports/{sport}/scores instead of
-    // iSports' date-based schedule endpoint.
     const byLeague: Record<string, any[]> = {};
     for (const p of oddsApiPreds) {
       const league = String(p.league_id ?? "");
@@ -685,7 +696,6 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
     }
   }
 
-  // Odds-API pending predictions, grouped by league_id (sport_key).
   const byLeague: Record<string, any[]> = {};
   for (const p of oddsApiPreds) {
     const league = String(p.league_id ?? "");
@@ -731,36 +741,9 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
 });
 
 // ---- Single / Combo of the Day ----
-// LOCKED the first time a scan produces a qualifying pick for a given MATCH day (kickoff
-// date) — never recomputed/overwritten once a lock exists for that day. Grouping is done
-// by kickoff date, NOT by when the scan happened to run — a scan run the evening before
-// (e.g. scanning tonight for tomorrow's fixtures) must still correctly lock tomorrow's
-// pick the moment it produces one, rather than getting silently filed under today (the
-// scan's run date) where nothing will ever look for it. Only ever draws from picks with a
-// real, confirmed market price, non-negative EV, and at/below the EV ceiling (same
-// discipline as elsewhere in this app). Combo is EXPERIMENTAL and tracked completely
-// separately from the validated single-pick stats — see the historical numbers from this
-// exact test: a daily 3-4 leg Match Winner ACCA went 0/14 winning days despite every leg
-// being individually profitable as a single. 2 legs from different matches is the more
-// defensible starting point, but this is data-gathering, not a recommendation to stake it.
-//
-// EV ceiling backtest (graded picks, July 12 onward):
-//   10-20% EV  (n=41): 53.7% win rate, +3.0% realized ROI
-//   20-35% EV  (n=27): 48.1% win rate, +6.6% realized ROI
-//   35-50% EV  (n=6):  50.0% win rate, +22.8% realized ROI  (too small a sample to trust)
-//   50%+ EV    (n=27): 25.9% win rate, -10.6% realized ROI  (confirmed collapse zone)
-// 40% sits just above the well-performing 20-35% band, captures a modest slice of the
-// promising-but-thin 35-50% band, and stays clear of the confirmed 50%+ collapse.
 const DAILY_PICK_EV_CEILING = 0.40;
 const DAILY_PICK_TYPES = ["match_winner", "over_2_5_goals", "match_winner_hedged"];
 
-/**
- * Locks in Single/Combo of the Day for every MATCH day (kickoff date) that has qualifying
- * picks but doesn't have a lock yet. Called once at the end of every successful scan. Looks
- * back a bounded 45 days to keep the query cheap as the predictions table grows — locks are
- * meant to be created within a day or two of the scan that produced them anyway, so this
- * window is generous, not limiting.
- */
 export async function lockDailyBestPickIfNeeded(): Promise<void> {
   const lookbackStart = new Date(Date.now() - 45 * 24 * 3600 * 1000).toISOString();
 
