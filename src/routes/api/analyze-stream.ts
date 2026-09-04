@@ -241,6 +241,10 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     error: e?.message ?? "failed",
                   });
                 }
+              // Staggered pause between matches on top of the low-level request throttle —
+              // gives the trial iSportsAPI tier room to breathe so scans complete fully
+              // instead of stalling/rushing partway through on larger match counts.
+              await new Promise((r) => setTimeout(r, 1000));                                
               }
 
               send("status", { message: "Generating final predictions…" });
