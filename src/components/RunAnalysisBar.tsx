@@ -37,7 +37,7 @@ export function RunAnalysisBar() {
   // where model error compounds.
   const [minOdds, setMinOdds] = useState(1.5);
   const [maxOdds, setMaxOdds] = useState(3.5);
-  const [oddsBounds, setOddsBounds] = useState<[number, number]>([1, 10]);
+  const [oddsBounds, setOddsBounds] = useState<[number, number]>([1, 5]);
   const [trustedOnly, setTrustedOnly] = useState(true);
   const [refresh, setRefresh] = useState(false);
   const [betType, setBetType] = useState<string>("all");
