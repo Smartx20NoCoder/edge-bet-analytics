@@ -1,1 +1,17 @@
+name: Automated Daily Football Match Scanner
 
+on:
+  schedule:
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send secure POST hook to your Supabase Edge Function
+        run: |
+          curl -X POST "https://tgifyvjyztrpoljdlqst.supabase.co/src/routes/api/analyze-stream.ts" \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+          -d '{"filter":"today","maxMatches":80}'
