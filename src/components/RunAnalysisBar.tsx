@@ -31,12 +31,12 @@ function todayISO() {
 export function RunAnalysisBar() {
   const [date, setDate] = useState(todayISO());
   const [timeframeHours, setTimeframeHours] = useState(12);
-  const [maxMatches, setMaxMatches] = useState(50);
+  const [maxMatches, setMaxMatches] = useState(80);
   // Recommended defaults for EV research: widen the odds range rather than narrow it —
   // very short odds can't carry meaningful EV even when "correct," very long odds are
   // where model error compounds.
   const [minOdds, setMinOdds] = useState(1.5);
-  const [maxOdds, setMaxOdds] = useState(6);
+  const [maxOdds, setMaxOdds] = useState(3.5);
   const [oddsBounds, setOddsBounds] = useState<[number, number]>([1, 10]);
   const [trustedOnly, setTrustedOnly] = useState(true);
   const [refresh, setRefresh] = useState(false);
