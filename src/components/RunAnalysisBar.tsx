@@ -9,8 +9,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { getApiUsageToday } from "@/lib/predictions.functions";
 
 const TIMEFRAMES = [
-  { hours: 4, label: "Next 4h" },
-  { hours: 6, label: "Next 6h" },
   { hours: 12, label: "Next 12h" },
   { hours: 24, label: "Next 24h" },
 ];
@@ -44,18 +42,18 @@ export function RunAnalysisBar() {
   const [refresh, setRefresh] = useState(false);
   const [betType, setBetType] = useState<string>("all");
   // Threshold values + adjustable slider bounds for each.
-  const [winRateFloor, setWinRateFloor] = useState(45);
-  const [winRateBounds, setWinRateBounds] = useState<[number, number]>([35, 70]);
+  const [winRateFloor, setWinRateFloor] = useState(53);
+  const [winRateBounds, setWinRateBounds] = useState<[number, number]>([45, 70]);
   const [drawRateCeil, setDrawRateCeil] = useState(35);
   const [drawRateBounds, setDrawRateBounds] = useState<[number, number]>([15, 50]);
   // Lowered from 52% — this floor filters on confidence (likelihood), not EV (price value).
   // Raising it just surfaces more "likely" favourites, which are often priced too short to
   // carry real value. Lowering it lets more candidates through so the EV badge — the real
   // filter — has more to work with.
-  const [matchWinnerFloor, setMatchWinnerFloor] = useState(49);
+  const [matchWinnerFloor, setMatchWinnerFloor] = useState(56);
   const [matchWinnerBounds, setMatchWinnerBounds] = useState<[number, number]>([45, 75]);
   const [over25Floor, setOver25Floor] = useState(55);
-  const [over25Bounds, setOver25Bounds] = useState<[number, number]>([40, 90]);
+  const [over25Bounds, setOver25Bounds] = useState<[number, number]>([50, 90]);
   const [apiKey, setApiKey] = useState<1 | 2>(() => {
     if (typeof window === "undefined") return 1;
     const v = window.localStorage.getItem("betedge.apiKey");
