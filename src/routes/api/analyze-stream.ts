@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { fetchMatchAnalysis, fetchScheduleByDate, fetchLiveOdds, setForcedKey } from "@/lib/isports.server";
+import { fetchMatchAnalysis, fetchScheduleByDate, fetchLiveOdds, setForcedKey, hasMainOdds } from "@/lib/isports.server";
 import { gradePrediction as _g, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "@/lib/predictions.server";
 import { lockDailyBestPickIfNeeded } from "@/lib/predictions.functions";
 import { runDualFreeScan, getOddsApiKeysStatus } from "@/lib/oddsapi.server";
@@ -139,29 +139,67 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 return;
               }
 
-              const initialCandidates = afterTrusted.sort((a, b) => a.matchTime - b.matchTime).slice(0, maxMatches);
+              const sortedPool = afterTrusted.sort((a, b) => a.matchTime - b.matchTime);
 
+              // Dedup against already-predicted matches across the WHOLE trusted/eligible
+              // pool (not just the first maxMatches) — needed now that the odds-check
+              // below searches further into the pool to find matches that actually have
+              // live odds available.
               let skippedExisting = 0;
-              let candidates = initialCandidates;
-              if (initialCandidates.length) {
-                const ids = initialCandidates.map((c) => String(c.matchId));
+              let dedupedPool = sortedPool;
+              if (sortedPool.length) {
+                const ids = sortedPool.map((c) => String(c.matchId));
                 const { data: existing } = await supabaseAdmin
                   .from("predictions")
                   .select("match_id")
                   .in("match_id", ids);
                 const existingSet = new Set((existing ?? []).map((r) => String(r.match_id)));
-                candidates = initialCandidates.filter((c) => !existingSet.has(String(c.matchId)));
-                skippedExisting = initialCandidates.length - candidates.length;
+                dedupedPool = sortedPool.filter((c) => !existingSet.has(String(c.matchId)));
+                skippedExisting = sortedPool.length - dedupedPool.length;
                 if (skippedExisting) {
                   send("status", { message: `Skipping ${skippedExisting} matches already predicted in a previous scan.` });
                 }
               }
+              if (!dedupedPool.length) {
+                send("status", { message: `iSportsAPI: all ${sortedPool.length} qualifying matches were already predicted in earlier scans.` });
+                return;
+              }
+
+              // Filter out matches with no real live odds BEFORE spending an analysis slot
+              // on them. Most iSportsAPI fixtures on a given day have no odds coverage at
+              // all — checking availability up front (instead of only discovering it after
+              // full prediction generation, as before) means the maxMatches budget goes to
+              // matches that can actually be priced into a real EV pick, not wasted on ones
+              // that never could be. Stops as soon as maxMatches odds-covered matches are
+              // found, rather than checking the entire remaining pool exhaustively.
+              const candidates = [];
+              let skippedNoOdds = 0;
+              let checkedForOdds = 0;
+              for (const m of dedupedPool) {
+                if (candidates.length >= maxMatches) break;
+                checkedForOdds++;
+                let hasOdds = true;
+                try {
+                  hasOdds = await hasMainOdds(m.matchId);
+                } catch (e) {
+                  // Fails open — a flaky odds check shouldn't remove an otherwise-good match.
+                  hasOdds = true;
+                }
+                if (hasOdds) {
+                  candidates.push(m);
+                } else {
+                  skippedNoOdds++;
+                }
+              }
+              if (skippedNoOdds) {
+                send("status", { message: `Skipping ${skippedNoOdds} match(es) with no live odds available (checked ${checkedForOdds} matches to fill ${candidates.length} odds-covered slot${candidates.length === 1 ? "" : "s"}).` });
+              }
               if (!candidates.length) {
-                send("status", { message: `iSportsAPI: all ${initialCandidates.length} qualifying matches were already predicted in earlier scans.` });
+                send("status", { message: `iSportsAPI: none of the ${dedupedPool.length} qualifying matches have live odds available right now.` });
                 return;
               }
               send("status", {
-                message: `Analyzing top ${candidates.length} of ${afterTrusted.length} qualifying matches${skippedExisting ? ` (${skippedExisting} skipped as duplicates)` : ""}.`,
+                message: `Analyzing ${candidates.length} matches with live odds (of ${afterTrusted.length} qualifying)${skippedExisting ? `, ${skippedExisting} skipped as duplicates` : ""}${skippedNoOdds ? `, ${skippedNoOdds} skipped (no odds)` : ""}.`,
                 total: candidates.length,
               });
 
@@ -365,7 +403,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                   predictions_generated: finalPreds.length,
                   avg_confidence: Math.round(avg * 100) / 100,
                   status: "completed",
-                  notes: JSON.stringify({ engine: "isports", date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount, hedgedCount, winRateFloor, drawRateCeil, over25Floor, matchWinnerFloor, doubleChanceFloor, cornersFloor }),
+                  notes: JSON.stringify({ engine: "isports", date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, skippedNoOdds, noOddsCount, hedgedCount, winRateFloor, drawRateCeil, over25Floor, matchWinnerFloor, doubleChanceFloor, cornersFloor }),
                 })
                 .select()
                 .single();
