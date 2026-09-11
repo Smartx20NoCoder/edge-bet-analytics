@@ -73,10 +73,10 @@ export const Route = createFileRoute("/api/analyze-stream")({
         const apiKeyParam = url.searchParams.get("apiKey");
         const forcedKey = apiKeyParam === "1" ? 1 : apiKeyParam === "2" ? 2 : null;
         const maxOdds = Number(url.searchParams.get("maxOdds") ?? 100);
-        const winRateFloor = Math.max(0, Math.min(1, Number(url.searchParams.get("winRateFloor") ?? 0.45)));
+        const winRateFloor = Math.max(0, Math.min(1, Number(url.searchParams.get("winRateFloor") ?? 0.53)));
         const drawRateCeil = Math.max(0, Math.min(1, Number(url.searchParams.get("drawRateCeil") ?? 0.35)));
         const over25Floor = Math.max(0, Math.min(100, Number(url.searchParams.get("over25Floor") ?? 55)));
-        const matchWinnerFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("matchWinnerFloor") ?? 49)));
+        const matchWinnerFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("matchWinnerFloor") ?? 56)));
         const doubleChanceFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("doubleChanceFloor") ?? 65)));
         const cornersFloor = Math.max(0, Math.min(100, Number(url.searchParams.get("cornersFloor") ?? 70)));
         const matchThresholds = { winRateFloor, drawRateCeil, over25Floor, matchWinnerFloor, doubleChanceFloor };
@@ -368,17 +368,18 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     stats: { ...(p.stats ?? {}), oddsAvailable: true },
                   };
                 }
+                // No real live price found for this pick's exact bet type/line — DROP it
+                // entirely rather than saving it with a null price. The pre-scan filter
+                // (hasMainOdds) only confirms SOME 1X2 data exists for the match; it can't
+                // cheaply confirm 2+ bookmakers agree on a real price, or that anyone
+                // quotes exactly the 2.5 total line for Over 2.5 specifically — so this
+                // final check is still needed to guarantee every SAVED pick has a real,
+                // confirmed price behind it.
                 noOddsCount++;
-                return {
-                  ...p,
-                  market_odds: null,
-                  expected_value: null,
-                  recommendation: `Lean ${p.selection} (${p.confidence}% model confidence, no live market price found for this bet type/line).`,
-                  stats: { ...(p.stats ?? {}), oddsAvailable: false },
-                };
-              });
+                return null;
+              }).filter((p) => p !== null);
               if (noOddsCount) {
-                send("status", { message: `${noOddsCount} pick(s) have no confirmed live market price for their exact bet type — confidence only, no EV shown.` });
+                send("status", { message: `${noOddsCount} pick(s) dropped — no confirmed live market price for their exact bet type/line.` });
               }
               if (hedgedCount) {
                 send("status", { message: `${hedgedCount} sub-60%-confidence/sub-10%-EV Match Winner pick(s) hedged to a real +0.5 Asian Handicap line.` });
