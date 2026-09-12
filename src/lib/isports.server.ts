@@ -1,7 +1,7 @@
 // Server-only iSportsAPI client. Never import from client code.
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
-const BASE = "http://api.isportsapi.com/sport/football";
+const BASE = "https://api.isportsapi.com/sport/football";
 
 // In-memory cache of key statuses (now including the key VALUE itself, sourced
 // from api_key_status.api_key) to avoid a DB roundtrip on every call.
@@ -130,7 +130,28 @@ async function tryWithKey<T = any>(idx: 1 | 2, path: string, params: Record<stri
   await throttle();
   const qs = new URLSearchParams({ api_key: k, ...params }).toString();
   const url = `${BASE}${path}?${qs}`;
-  const res = await fetch(url, { method: "GET" });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error: any) {
+    const cause = error?.cause;
+    const code = cause?.code ?? error?.code ?? error?.name ?? "UNKNOWN";
+    const message = cause?.message ?? error?.message ?? "unknown network error";
+    console.error(`[iSportsAPI] NETWORK FETCH FAILED ${path} key ${idx}:`, {
+      code,
+      message,
+      url: url.replace(k, "***REDACTED***"),
+    });
+    return {
+      ok: false,
+      quota: false,
+      rateLimited: false,
+      reason: `network fetch failed (${code}): ${message}`,
+    };
+  }
   const text = await res.text();
   let json: any;
   try { json = JSON.parse(text); } catch {
