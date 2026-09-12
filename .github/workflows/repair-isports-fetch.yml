@@ -1,0 +1,48 @@
+name: Repair iSports fetch runtime
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch iSports transport
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path("src/lib/isports.server.ts")
+          s = p.read_text(encoding="utf-8")
+
+          old_base = 'const BASE = "http://api.isportsapi.com/sport/football";'
+          new_base = 'const BASE = "https://api.isportsapi.com/sport/football";'
+          if old_base in s:
+              s = s.replace(old_base, new_base, 1)
+
+          old_fetch = '''  const res = await fetch(url, { method: "GET" });\n  const text = await res.text();'''
+          new_fetch = '''  let res: Response;\n  try {\n    res = await fetch(url, {\n      method: "GET",\n      signal: AbortSignal.timeout(15_000),\n    });\n  } catch (error: any) {\n    const cause = error?.cause;\n    const code = cause?.code ?? error?.code ?? error?.name ?? "UNKNOWN";\n    const message = cause?.message ?? error?.message ?? "unknown network error";\n    console.error(`[iSportsAPI] NETWORK FETCH FAILED ${path} key ${idx}:`, {\n      code,\n      message,\n      url: url.replace(k, "***REDACTED***"),\n    });\n    return {\n      ok: false,\n      quota: false,\n      rateLimited: false,\n      reason: `network fetch failed (${code}): ${message}`,\n    };\n  }\n  const text = await res.text();'''
+
+          if old_fetch in s and 'NETWORK FETCH FAILED' not in s:
+              s = s.replace(old_fetch, new_fetch, 1)
+
+          p.write_text(s, encoding="utf-8")
+
+      - name: Commit repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/isports.server.ts
+          if git diff --cached --quiet; then
+            echo "No repair changes required."
+          else
+            git commit -m "fix: harden iSports API transport"
+            git push
+          fi
