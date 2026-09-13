@@ -138,7 +138,7 @@ async function getEventsPayload(sportKey: string, markets: string): Promise<any[
     .select("raw, fetched_at")
     .eq("match_id", cacheKey)
     .maybeSingle();
-  if (cached && Date.now() - new Date(cached.fetched_at).getTime() < 6 * 3600 * 1000) {
+  if (cached && Date.now() - new Date(cached.fetched_at).getTime() < 10 * 60 * 1000) {
     return cached.raw as any[];
   }
   const { res, text } = await fetchWithKeyRotation(
@@ -266,7 +266,7 @@ type FairValueSide = { fairOdds: number; fairProb: number; otherOdds: number; ot
 
 // Best (max) price among fresh, non-Pinnacle bookmakers — not the median. Line-shopping
 // means finding the SINGLE best price you could actually bet at; averaging several books
-// together dilutes exactly the standout price this strategy is meant to catch. The
+// together dilutes exactly the standout price this strategy is meant to find. The
 // staleness filter already guards against a "best" price actually being a stale/erroneous
 // outlier, which was the main risk of moving off median.
 function computeFairValue(pinnacleOdds: number | undefined, otherOddsForSameSide: number[]): FairValueSide | undefined {
