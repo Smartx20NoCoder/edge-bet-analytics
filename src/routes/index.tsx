@@ -31,8 +31,8 @@ function Dashboard() {
         </div>
         <RunAnalysisBar />
       </section>
-      <DailyPicksPanel />
       <MonthlyPerformancePanel />
+      <DailyPicksPanel />
     </div>
   );
 }
