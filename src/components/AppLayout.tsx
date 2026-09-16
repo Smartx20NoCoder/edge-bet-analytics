@@ -14,7 +14,7 @@ export function AppLayout() {
     <div className="min-h-screen flex flex-col">
       <header className="sticky top-0 z-30 glass border-b">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          <Link to="/" className="flex items-center gap-2">
+          <Link to="/" className="flex items-center gap-2" onClick={(e) => { e.preventDefault(); window.location.assign("/"); }}>
             <div className="h-8 w-8 rounded-md bg-neon glow-neon flex items-center justify-center">
               <Activity className="h-4 w-4 text-neon-foreground" />
             </div>
@@ -30,6 +30,7 @@ export function AppLayout() {
                 <Link
                   key={to}
                   to={to}
+                  onClick={(e) => { e.preventDefault(); window.location.assign(to); }}
                   className={cn(
                     "inline-flex items-center gap-2 px-3 h-9 rounded-md text-sm transition-colors",
                     active
@@ -52,6 +53,7 @@ export function AppLayout() {
               <Link
                 key={to}
                 to={to}
+                onClick={(e) => { e.preventDefault(); window.location.assign(to); }}
                 className={cn(
                   "shrink-0 inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-xs",
                   active ? "bg-neon/10 text-neon" : "text-muted-foreground bg-accent/40",
