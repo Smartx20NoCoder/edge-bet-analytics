@@ -28,6 +28,8 @@ function AdminLogin() {
         const role = (data.user.app_metadata as Record<string, unknown> | null)?.role;
         if (role === "admin") await navigate({ to: "/settings" });
       }
+    }).catch(() => {
+      // A failed session check should not prevent the login form from being used.
     });
   }, [navigate]);
 
@@ -35,20 +37,37 @@ function AdminLogin() {
     e.preventDefault();
     setLoading(true);
     setError(null);
-    const { data, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-    if (authError || !data.session || !data.user) {
-      setError(authError?.message ?? "Unable to sign in");
+
+    try {
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+
+      if (authError || !data.session || !data.user) {
+        setError(authError?.message ?? "Unable to sign in");
+        setLoading(false);
+        return;
+      }
+
+      const role = (data.user.app_metadata as Record<string, unknown> | null)?.role;
+      if (role !== "admin") {
+        await supabase.auth.signOut();
+        setError("This account is not authorized for administrator access.");
+        setLoading(false);
+        return;
+      }
+
+      await navigate({ to: "/settings" });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unable to connect to the authentication service.";
+      setError(
+        message.toLowerCase().includes("failed to fetch")
+          ? "Unable to connect to the authentication service. Please check your connection and try again."
+          : message,
+      );
       setLoading(false);
-      return;
     }
-    const role = (data.user.app_metadata as Record<string, unknown> | null)?.role;
-    if (role !== "admin") {
-      await supabase.auth.signOut();
-      setError("This account is not authorized for administrator access.");
-      setLoading(false);
-      return;
-    }
-    await navigate({ to: "/settings" });
   }
 
   return (
@@ -66,7 +85,7 @@ function AdminLogin() {
 
         <div className="flex items-start gap-2 text-xs text-muted-foreground rounded-lg border border-border/60 p-3">
           <ShieldCheck className="h-4 w-4 text-neon shrink-0 mt-0.5" />
-          <span>Only a Supabase Auth account explicitly assigned the <strong>admin</strong> application role can access or change settings.</span>
+          <span>Only a Edge Bet admin can access or change settings.</span>
         </div>
 
         <form onSubmit={signIn} className="space-y-4">
