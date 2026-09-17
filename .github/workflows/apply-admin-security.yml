@@ -3,25 +3,25 @@ name: Apply admin security
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: "!contains(github.event.head_commit.message, '[admin-security-applied]')"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Apply admin guards
+        shell: python
         run: |
-          python - <<'PY'
           from pathlib import Path
 
-          p = Path('src/routes/settings.tsx')
-          s = p.read_text()
+          p = Path("src/routes/settings.tsx")
+          s = p.read_text(encoding="utf-8")
           s = s.replace('import { checkApiStatus, setApiKey } from "@/lib/predictions.functions";', 'import { getAdminApiStatus, setAdminApiKey, getAdminEngineSettings, setAdminDataEngine, setAdminSportKeys, setAdminOddsApiKeys } from "@/lib/admin.functions";\nimport { supabase } from "@/integrations/supabase/client";')
           s = s.replace('const fn = useServerFn(setApiKey);', 'const fn = useServerFn(setAdminApiKey);')
           s = s.replace('await fn({ data: { slot, key: value.trim() } });', 'const { data: session } = await supabase.auth.getSession();\n      if (!session.session?.access_token) throw new Error("Authentication required");\n      await fn({ data: { accessToken: session.session.access_token, slot, key: value.trim() } });')
@@ -35,10 +35,10 @@ jobs:
           s = s.replace('await setOddsKeysFn({ data: { keys } });', 'const { data: session } = await supabase.auth.getSession();\n      if (!session.session?.access_token) throw new Error("Authentication required");\n      await setOddsKeysFn({ data: { accessToken: session.session.access_token, keys } });')
           s = s.replace('const fn = useServerFn(checkApiStatus);', 'const fn = useServerFn(getAdminApiStatus);')
           s = s.replace('const q = useQuery({ queryKey: ["api-status"], queryFn: () => fn() });', 'const q = useQuery({ queryKey: ["api-status"], queryFn: async () => { const { data: session } = await supabase.auth.getSession(); if (!session.session?.access_token) throw new Error("Authentication required"); return fn({ data: { accessToken: session.session.access_token } }); } });')
-          p.write_text(s)
+          p.write_text(s, encoding="utf-8")
 
-          p = Path('src/lib/predictions.functions.ts')
-          s = p.read_text()
+          p = Path("src/lib/predictions.functions.ts")
+          s = p.read_text(encoding="utf-8")
           if 'import { requireAdmin } from "./admin-auth.server";' not in s:
               s = s.replace('import { fetchOddsApiResults } from "./oddsapi.server";', 'import { fetchOddsApiResults } from "./oddsapi.server";\nimport { requireAdmin } from "./admin-auth.server";')
           old = '''export const checkApiStatus = createServerFn({ method: "GET" }).handler(async () => {
@@ -74,11 +74,11 @@ export const setApiKey = createServerFn({ method: "POST" })
     return { ok: true };
   });'''
           if old not in s:
-              raise SystemExit('predictions.functions.ts target block not found')
-          p.write_text(s.replace(old, new))
+              raise SystemExit("predictions.functions.ts target block not found")
+          p.write_text(s.replace(old, new), encoding="utf-8")
 
-          p = Path('src/lib/engine-settings.functions.ts')
-          s = p.read_text()
+          p = Path("src/lib/engine-settings.functions.ts")
+          s = p.read_text(encoding="utf-8")
           if 'import { requireAdmin } from "./admin-auth.server";' not in s:
               s = s.replace('import { z } from "zod";', 'import { z } from "zod";\nimport { requireAdmin } from "./admin-auth.server";')
           s = s.replace('export const getEngineSettings = createServerFn({ method: "GET" }).handler(async () => {', 'export const getEngineSettings = createServerFn({ method: "POST" })\n  .inputValidator((d: unknown) => z.object({ accessToken: z.string().min(20) }).parse(d))\n  .handler(async ({ data }) => {\n    await requireAdmin(data.accessToken);')
@@ -87,11 +87,14 @@ export const setApiKey = createServerFn({ method: "POST" })
           s = s.replace('z.object({ keys: z.array(z.string().min(1)).max(10) }).parse(d))', 'z.object({ accessToken: z.string().min(20), keys: z.array(z.string().min(1)).max(10) }).parse(d))')
           s = s.replace('.handler(async ({ data }) => {\n    const { supabaseAdmin }', '.handler(async ({ data }) => {\n    await requireAdmin(data.accessToken);\n    const { supabaseAdmin }')
           s = s.replace('.handler(async ({ data }) => {\n    const { setOddsApiKeys }', '.handler(async ({ data }) => {\n    await requireAdmin(data.accessToken);\n    const { setOddsApiKeys }')
-          p.write_text(s)
+          p.write_text(s, encoding="utf-8")
           PY
 
+      - name: Commit security patch and remove migration workflow
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/routes/settings.tsx src/lib/predictions.functions.ts src/lib/engine-settings.functions.ts
+          git rm .github/workflows/apply-admin-security.yml
           git commit -m "feat: secure settings with admin auth [admin-security-applied]"
           git push
