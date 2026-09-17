@@ -1,0 +1,97 @@
+name: Apply admin security
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "!contains(github.event.head_commit.message, '[admin-security-applied]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Apply admin guards
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/routes/settings.tsx')
+          s = p.read_text()
+          s = s.replace('import { checkApiStatus, setApiKey } from "@/lib/predictions.functions";', 'import { getAdminApiStatus, setAdminApiKey, getAdminEngineSettings, setAdminDataEngine, setAdminSportKeys, setAdminOddsApiKeys } from "@/lib/admin.functions";\nimport { supabase } from "@/integrations/supabase/client";')
+          s = s.replace('const fn = useServerFn(setApiKey);', 'const fn = useServerFn(setAdminApiKey);')
+          s = s.replace('await fn({ data: { slot, key: value.trim() } });', 'const { data: session } = await supabase.auth.getSession();\n      if (!session.session?.access_token) throw new Error("Authentication required");\n      await fn({ data: { accessToken: session.session.access_token, slot, key: value.trim() } });')
+          s = s.replace('const fn = useServerFn(getEngineSettings);', 'const fn = useServerFn(getAdminEngineSettings);')
+          s = s.replace('const setEngineFn = useServerFn(setDataEngine);', 'const setEngineFn = useServerFn(setAdminDataEngine);')
+          s = s.replace('const setKeysFn = useServerFn(setSportKeys);', 'const setKeysFn = useServerFn(setAdminSportKeys);')
+          s = s.replace('const setOddsKeysFn = useServerFn(setOddsApiKeysList);', 'const setOddsKeysFn = useServerFn(setAdminOddsApiKeys);')
+          s = s.replace('const q = useQuery({ queryKey: ["engine-settings"], queryFn: () => fn() });', 'const q = useQuery({ queryKey: ["engine-settings"], queryFn: async () => { const { data: session } = await supabase.auth.getSession(); if (!session.session?.access_token) throw new Error("Authentication required"); return fn({ data: { accessToken: session.session.access_token } }); } });')
+          s = s.replace('await setEngineFn({ data: { dataEngine: engine } });', 'const { data: session } = await supabase.auth.getSession();\n    if (!session.session?.access_token) throw new Error("Authentication required");\n    await setEngineFn({ data: { accessToken: session.session.access_token, dataEngine: engine } });')
+          s = s.replace('await setKeysFn({ data: { sportKeys: keys } });', 'const { data: session } = await supabase.auth.getSession();\n      if (!session.session?.access_token) throw new Error("Authentication required");\n      await setKeysFn({ data: { accessToken: session.session.access_token, sportKeys: keys } });')
+          s = s.replace('await setOddsKeysFn({ data: { keys } });', 'const { data: session } = await supabase.auth.getSession();\n      if (!session.session?.access_token) throw new Error("Authentication required");\n      await setOddsKeysFn({ data: { accessToken: session.session.access_token, keys } });')
+          s = s.replace('const fn = useServerFn(checkApiStatus);', 'const fn = useServerFn(getAdminApiStatus);')
+          s = s.replace('const q = useQuery({ queryKey: ["api-status"], queryFn: () => fn() });', 'const q = useQuery({ queryKey: ["api-status"], queryFn: async () => { const { data: session } = await supabase.auth.getSession(); if (!session.session?.access_token) throw new Error("Authentication required"); return fn({ data: { accessToken: session.session.access_token } }); } });')
+          p.write_text(s)
+
+          p = Path('src/lib/predictions.functions.ts')
+          s = p.read_text()
+          if 'import { requireAdmin } from "./admin-auth.server";' not in s:
+              s = s.replace('import { fetchOddsApiResults } from "./oddsapi.server";', 'import { fetchOddsApiResults } from "./oddsapi.server";\nimport { requireAdmin } from "./admin-auth.server";')
+          old = '''export const checkApiStatus = createServerFn({ method: "GET" }).handler(async () => {
+  const { getApiKeySlotStatus } = await import("./isports.server");
+  const slots = await getApiKeySlotStatus();
+  const hasKey = slots.slot1 || slots.slot2;
+  return { hasKey, live: hasKey, error: hasKey ? null : "no key", slots };
+});
+
+export const setApiKey = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ slot: z.union([z.literal(1), z.literal(2)]), key: z.string().max(200) }).parse(d))
+  .handler(async ({ data }) => {
+    const { setApiKeyForSlot } = await import("./isports.server");
+    await setApiKeyForSlot(data.slot, data.key);
+    return { ok: true };
+  });'''
+          new = '''export const checkApiStatus = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: z.string().min(20) }).parse(d))
+  .handler(async ({ data }) => {
+    await requireAdmin(data.accessToken);
+    const { getApiKeySlotStatus } = await import("./isports.server");
+    const slots = await getApiKeySlotStatus();
+    const hasKey = slots.slot1 || slots.slot2;
+    return { hasKey, live: hasKey, error: hasKey ? null : "no key", slots };
+  });
+
+export const setApiKey = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: z.string().min(20), slot: z.union([z.literal(1), z.literal(2)]), key: z.string().max(200) }).parse(d))
+  .handler(async ({ data }) => {
+    await requireAdmin(data.accessToken);
+    const { setApiKeyForSlot } = await import("./isports.server");
+    await setApiKeyForSlot(data.slot, data.key);
+    return { ok: true };
+  });'''
+          if old not in s:
+              raise SystemExit('predictions.functions.ts target block not found')
+          p.write_text(s.replace(old, new))
+
+          p = Path('src/lib/engine-settings.functions.ts')
+          s = p.read_text()
+          if 'import { requireAdmin } from "./admin-auth.server";' not in s:
+              s = s.replace('import { z } from "zod";', 'import { z } from "zod";\nimport { requireAdmin } from "./admin-auth.server";')
+          s = s.replace('export const getEngineSettings = createServerFn({ method: "GET" }).handler(async () => {', 'export const getEngineSettings = createServerFn({ method: "POST" })\n  .inputValidator((d: unknown) => z.object({ accessToken: z.string().min(20) }).parse(d))\n  .handler(async ({ data }) => {\n    await requireAdmin(data.accessToken);')
+          s = s.replace('z.object({ dataEngine: z.enum(["isports", "dual_free"]) }).parse(d))', 'z.object({ accessToken: z.string().min(20), dataEngine: z.enum(["isports", "dual_free"]) }).parse(d))')
+          s = s.replace('z.object({ sportKeys: z.array(z.string().min(1)).min(1).max(40) }).parse(d))', 'z.object({ accessToken: z.string().min(20), sportKeys: z.array(z.string().min(1)).min(1).max(40) }).parse(d))')
+          s = s.replace('z.object({ keys: z.array(z.string().min(1)).max(10) }).parse(d))', 'z.object({ accessToken: z.string().min(20), keys: z.array(z.string().min(1)).max(10) }).parse(d))')
+          s = s.replace('.handler(async ({ data }) => {\n    const { supabaseAdmin }', '.handler(async ({ data }) => {\n    await requireAdmin(data.accessToken);\n    const { supabaseAdmin }')
+          s = s.replace('.handler(async ({ data }) => {\n    const { setOddsApiKeys }', '.handler(async ({ data }) => {\n    await requireAdmin(data.accessToken);\n    const { setOddsApiKeys }')
+          p.write_text(s)
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/routes/settings.tsx src/lib/predictions.functions.ts src/lib/engine-settings.functions.ts
+          git commit -m "feat: secure settings with admin auth [admin-security-applied]"
+          git push
