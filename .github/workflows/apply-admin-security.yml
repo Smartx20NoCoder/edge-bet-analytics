@@ -19,6 +19,7 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          import re
 
           p = Path("src/routes/settings.tsx")
           s = p.read_text(encoding="utf-8")
@@ -41,41 +42,9 @@ jobs:
           s = p.read_text(encoding="utf-8")
           if 'import { requireAdmin } from "./admin-auth.server";' not in s:
               s = s.replace('import { fetchOddsApiResults } from "./oddsapi.server";', 'import { fetchOddsApiResults } from "./oddsapi.server";\nimport { requireAdmin } from "./admin-auth.server";')
-          old = '''export const checkApiStatus = createServerFn({ method: "GET" }).handler(async () => {
-  const { getApiKeySlotStatus } = await import("./isports.server");
-  const slots = await getApiKeySlotStatus();
-  const hasKey = slots.slot1 || slots.slot2;
-  return { hasKey, live: hasKey, error: hasKey ? null : "no key", slots };
-});
-
-export const setApiKey = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => z.object({ slot: z.union([z.literal(1), z.literal(2)]), key: z.string().max(200) }).parse(d))
-  .handler(async ({ data }) => {
-    const { setApiKeyForSlot } = await import("./isports.server");
-    await setApiKeyForSlot(data.slot, data.key);
-    return { ok: true };
-  });'''
-          new = '''export const checkApiStatus = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => z.object({ accessToken: z.string().min(20) }).parse(d))
-  .handler(async ({ data }) => {
-    await requireAdmin(data.accessToken);
-    const { getApiKeySlotStatus } = await import("./isports.server");
-    const slots = await getApiKeySlotStatus();
-    const hasKey = slots.slot1 || slots.slot2;
-    return { hasKey, live: hasKey, error: hasKey ? null : "no key", slots };
-  });
-
-export const setApiKey = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => z.object({ accessToken: z.string().min(20), slot: z.union([z.literal(1), z.literal(2)]), key: z.string().max(200) }).parse(d))
-  .handler(async ({ data }) => {
-    await requireAdmin(data.accessToken);
-    const { setApiKeyForSlot } = await import("./isports.server");
-    await setApiKeyForSlot(data.slot, data.key);
-    return { ok: true };
-  });'''
-          if old not in s:
-              raise SystemExit("predictions.functions.ts target block not found")
-          p.write_text(s.replace(old, new), encoding="utf-8")
+          s = s.replace('export const checkApiStatus = createServerFn({ method: "GET" }).handler(async () => {', 'export const checkApiStatus = createServerFn({ method: "POST" })\n  .inputValidator((d: unknown) => z.object({ accessToken: z.string().min(20) }).parse(d))\n  .handler(async ({ data }) => {\n    await requireAdmin(data.accessToken);')
+          s = s.replace('.inputValidator((d: unknown) => z.object({ slot: z.union([z.literal(1), z.literal(2)]), key: z.string().max(200) }).parse(d))\n  .handler(async ({ data }) => {\n    const { setApiKeyForSlot }', '.inputValidator((d: unknown) => z.object({ accessToken: z.string().min(20), slot: z.union([z.literal(1), z.literal(2)]), key: z.string().max(200) }).parse(d))\n  .handler(async ({ data }) => {\n    await requireAdmin(data.accessToken);\n    const { setApiKeyForSlot }')
+          p.write_text(s, encoding="utf-8")
 
           p = Path("src/lib/engine-settings.functions.ts")
           s = p.read_text(encoding="utf-8")
