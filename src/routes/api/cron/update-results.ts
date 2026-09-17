@@ -1,20 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { updateAllPendingResults } from "@/lib/predictions.functions";
-
-const SUPABASE_CRON_TOKEN_HASH = "f78e5efee2861b96a40be1a34e98778a4992d4b085d1a6e0067db48ed80fb049";
-
-async function matchesSupabaseCronToken(token: string): Promise<boolean> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-  const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return hash === SUPABASE_CRON_TOKEN_HASH;
-}
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 async function isAuthorized(request: Request): Promise<boolean> {
   const secret = process.env.CRON_SECRET;
-  if (secret && request.headers.get("authorization") === `Bearer ${secret}`) return true;
-
-  const token = request.headers.get("x-edge-cron-token");
-  return token ? matchesSupabaseCronToken(token) : false;
+  return Boolean(secret && request.headers.get("authorization") === `Bearer ${secret}`);
 }
 
 export const Route = createFileRoute("/api/cron/update-results")({
@@ -26,8 +16,47 @@ export const Route = createFileRoute("/api/cron/update-results")({
         }
 
         try {
+          const { data: settings, error: settingsError } = await supabaseAdmin
+            .from("engine_settings")
+            .select("results_automation_enabled, results_automation_interval, results_automation_last_run")
+            .eq("id", true)
+            .maybeSingle();
+
+          if (settingsError) throw new Error(settingsError.message);
+
+          if (!settings?.results_automation_enabled || settings.results_automation_interval === "off") {
+            return Response.json({ ok: true, job: "update-results", skipped: true, reason: "automation_disabled" });
+          }
+
+          // The current Vercel Hobby schedule is daily. Keep the configurable
+          // 4h/6h/12h values stored for future higher-frequency scheduling,
+          // but never pretend they are being executed more frequently than the
+          // deployed Vercel cron actually triggers.
+          if (settings.results_automation_interval !== "24h") {
+            return Response.json({
+              ok: true,
+              job: "update-results",
+              skipped: true,
+              reason: "selected_interval_requires_higher_frequency_vercel_cron",
+              interval: settings.results_automation_interval,
+            });
+          }
+
+          const now = new Date();
+          const lastRun = settings.results_automation_last_run ? new Date(settings.results_automation_last_run) : null;
+          if (lastRun && now.getTime() - lastRun.getTime() < 23 * 60 * 60 * 1000) {
+            return Response.json({ ok: true, job: "update-results", skipped: true, reason: "not_due", lastRun: lastRun.toISOString() });
+          }
+
           const result = await updateAllPendingResults({ data: {} });
-          return Response.json({ ok: true, job: "update-results", ...result });
+
+          const { error: markError } = await supabaseAdmin
+            .from("engine_settings")
+            .update({ results_automation_last_run: now.toISOString(), updated_at: now.toISOString() })
+            .eq("id", true);
+          if (markError) throw new Error(markError.message);
+
+          return Response.json({ ok: true, job: "update-results", automated: true, ...result });
         } catch (error: any) {
           console.error("[cron:update-results] failed", error);
           return Response.json(
