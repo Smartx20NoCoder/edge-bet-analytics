@@ -6,7 +6,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 const NAV = [
   { to: "/", label: "Dashboard", Icon: LayoutDashboard },
   { to: "/history", label: "History", Icon: History },
-  { to: "/settings", label: "Settings", Icon: Settings },
+  { to: "/admin-login", label: "Settings", Icon: Settings },
 ] as const;
 
 export function AppLayout() {
@@ -27,7 +27,9 @@ export function AppLayout() {
           <div className="flex items-center gap-2 shrink-0">
             <nav className="hidden md:flex items-center gap-1">
               {NAV.map(({ to, label, Icon }) => {
-                const active = loc.pathname === to;
+                const active = to === "/admin-login"
+                  ? loc.pathname === "/settings" || loc.pathname === "/admin-login"
+                  : loc.pathname === to;
                 return (
                   <Link
                     key={to}
@@ -51,7 +53,9 @@ export function AppLayout() {
         </div>
         <nav className="md:hidden flex overflow-x-auto px-3 pb-2 gap-1">
           {NAV.map(({ to, label, Icon }) => {
-            const active = loc.pathname === to;
+            const active = to === "/admin-login"
+              ? loc.pathname === "/settings" || loc.pathname === "/admin-login"
+              : loc.pathname === to;
             return (
               <Link
                 key={to}
