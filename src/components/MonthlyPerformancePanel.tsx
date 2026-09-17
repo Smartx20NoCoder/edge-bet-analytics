@@ -13,7 +13,7 @@ function formatMonth(key: string) {
 
 function Row({ label, win, loss, pending, winRate }: { label: string; win: number; loss: number; pending: number; winRate: number | null }) {
   return (
-    <div className="flex items-center justify-between text-xs py-1">
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs py-1">
       <span className="text-muted-foreground">{label}</span>
       <div className="flex items-center gap-2 font-mono">
         <span className="text-neon">{win}W</span>
@@ -39,17 +39,17 @@ export function MonthlyPerformancePanel() {
   });
 
   return (
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 pb-8">
+    <div className="mx-auto w-full max-w-6xl px-3 sm:px-4 lg:px-6 pb-6 sm:pb-8">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground min-h-8"
       >
         {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
         <BarChart3 className="h-3.5 w-3.5" />
         Monthly win/loss (Single & Combo of the Day)
       </button>
       {open && (
-        <div className="mt-2 glass rounded-xl p-4 max-w-md">
+        <div className="mt-2 glass rounded-xl p-4 w-full max-w-md">
           {q.isLoading ? (
             <p className="text-xs text-muted-foreground">Loading…</p>
           ) : !q.data?.months?.length ? (
