@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { fetchMatchAnalysis, fetchResultsByDate, fetchScheduleByDate, fetchLiveOdds, setForcedKey } from "./isports.server";
 import { gradePrediction, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "./predictions.server";
 import { fetchOddsApiResults } from "./oddsapi.server";
+import { requireAdmin } from "./admin-auth.server";
 
 const BLOCKED_KEYWORDS = [
   "friendly", "futsal", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women",
@@ -491,7 +492,10 @@ export const getDashboardStats = createServerFn({ method: "GET" }).handler(async
   };
 });
 
-export const checkApiStatus = createServerFn({ method: "GET" }).handler(async () => {
+export const checkApiStatus = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => z.object({ accessToken: z.string().min(20) }).parse(d))
+  .handler(async ({ data }) => {
+    await requireAdmin(data.accessToken);
   const { getApiKeySlotStatus } = await import("./isports.server");
   const slots = await getApiKeySlotStatus();
   const hasKey = slots.slot1 || slots.slot2;
@@ -499,8 +503,9 @@ export const checkApiStatus = createServerFn({ method: "GET" }).handler(async ()
 });
 
 export const setApiKey = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => z.object({ slot: z.union([z.literal(1), z.literal(2)]), key: z.string().max(200) }).parse(d))
+  .inputValidator((d: unknown) => z.object({ accessToken: z.string().min(20), slot: z.union([z.literal(1), z.literal(2)]), key: z.string().max(200) }).parse(d))
   .handler(async ({ data }) => {
+    await requireAdmin(data.accessToken);
     const { setApiKeyForSlot } = await import("./isports.server");
     await setApiKeyForSlot(data.slot, data.key);
     return { ok: true };

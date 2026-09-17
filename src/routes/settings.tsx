@@ -2,7 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { checkApiStatus, setApiKey } from "@/lib/predictions.functions";
+import { getAdminApiStatus, setAdminApiKey, getAdminEngineSettings, setAdminDataEngine, setAdminSportKeys, setAdminOddsApiKeys } from "@/lib/admin.functions";
+import { supabase } from "@/integrations/supabase/client";
 import { CheckCircle2, XCircle, Lock, AlertTriangle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -25,7 +26,7 @@ export const Route = createFileRoute("/settings")({
 
 function KeySlotInput({ slot, source }: { slot: 1 | 2; source: "db" | "env" | "none" }) {
   const qc = useQueryClient();
-  const fn = useServerFn(setApiKey);
+  const fn = useServerFn(setAdminApiKey);
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -34,7 +35,9 @@ function KeySlotInput({ slot, source }: { slot: 1 | 2; source: "db" | "env" | "n
     if (!value.trim()) return;
     setSaving(true);
     try {
-      await fn({ data: { slot, key: value.trim() } });
+      const { data: session } = await supabase.auth.getSession();
+      if (!session.session?.access_token) throw new Error("Authentication required");
+      await fn({ data: { accessToken: session.session.access_token, slot, key: value.trim() } });
       setValue("");
       setSavedAt(Date.now());
       qc.invalidateQueries({ queryKey: ["api-status"] });
@@ -72,12 +75,12 @@ function KeySlotInput({ slot, source }: { slot: 1 | 2; source: "db" | "env" | "n
 
 function DataEngineCard() {
   const qc = useQueryClient();
-  const fn = useServerFn(getEngineSettings);
-  const setEngineFn = useServerFn(setDataEngine);
-  const setKeysFn = useServerFn(setSportKeys);
-  const setOddsKeysFn = useServerFn(setOddsApiKeysList);
+  const fn = useServerFn(getAdminEngineSettings);
+  const setEngineFn = useServerFn(setAdminDataEngine);
+  const setKeysFn = useServerFn(setAdminSportKeys);
+  const setOddsKeysFn = useServerFn(setAdminOddsApiKeys);
 
-  const q = useQuery({ queryKey: ["engine-settings"], queryFn: () => fn() });
+  const q = useQuery({ queryKey: ["engine-settings"], queryFn: async () => { const { data: session } = await supabase.auth.getSession(); if (!session.session?.access_token) throw new Error("Authentication required"); return fn({ data: { accessToken: session.session.access_token } }); } });
   const [sportKeysText, setSportKeysText] = useState("");
   const [oddsKeysText, setOddsKeysText] = useState("");
   const [savingKeys, setSavingKeys] = useState(false);
@@ -87,7 +90,9 @@ function DataEngineCard() {
   const currentEngine = q.data?.dataEngine ?? "isports";
 
   async function switchEngine(engine: "isports" | "dual_free") {
-    await setEngineFn({ data: { dataEngine: engine } });
+    const { data: session } = await supabase.auth.getSession();
+    if (!session.session?.access_token) throw new Error("Authentication required");
+    await setEngineFn({ data: { accessToken: session.session.access_token, dataEngine: engine } });
     qc.invalidateQueries({ queryKey: ["engine-settings"] });
   }
 
@@ -96,7 +101,9 @@ function DataEngineCard() {
     if (!keys.length) return;
     setSavingKeys(true);
     try {
-      await setKeysFn({ data: { sportKeys: keys } });
+      const { data: session } = await supabase.auth.getSession();
+      if (!session.session?.access_token) throw new Error("Authentication required");
+      await setKeysFn({ data: { accessToken: session.session.access_token, sportKeys: keys } });
       qc.invalidateQueries({ queryKey: ["engine-settings"] });
     } finally {
       setSavingKeys(false);
@@ -108,7 +115,9 @@ function DataEngineCard() {
     if (!keys.length) return;
     setSavingOddsKeys(true);
     try {
-      await setOddsKeysFn({ data: { keys } });
+      const { data: session } = await supabase.auth.getSession();
+      if (!session.session?.access_token) throw new Error("Authentication required");
+      await setOddsKeysFn({ data: { accessToken: session.session.access_token, keys } });
       setOddsKeysText("");
       setOddsKeysSavedAt(Date.now());
       qc.invalidateQueries({ queryKey: ["engine-settings"] });
@@ -197,8 +206,8 @@ function DataEngineCard() {
 }
 
 function Settings() {
-  const fn = useServerFn(checkApiStatus);
-  const q = useQuery({ queryKey: ["api-status"], queryFn: () => fn() });
+  const fn = useServerFn(getAdminApiStatus);
+  const q = useQuery({ queryKey: ["api-status"], queryFn: async () => { const { data: session } = await supabase.auth.getSession(); if (!session.session?.access_token) throw new Error("Authentication required"); return fn({ data: { accessToken: session.session.access_token } }); } });
   const slots = q.data?.slots;
 
   return (
