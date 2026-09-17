@@ -19,7 +19,6 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-          import re
 
           p = Path("src/routes/settings.tsx")
           s = p.read_text(encoding="utf-8")
@@ -57,7 +56,6 @@ jobs:
           s = s.replace('.handler(async ({ data }) => {\n    const { supabaseAdmin }', '.handler(async ({ data }) => {\n    await requireAdmin(data.accessToken);\n    const { supabaseAdmin }')
           s = s.replace('.handler(async ({ data }) => {\n    const { setOddsApiKeys }', '.handler(async ({ data }) => {\n    await requireAdmin(data.accessToken);\n    const { setOddsApiKeys }')
           p.write_text(s, encoding="utf-8")
-          PY
 
       - name: Commit security patch and remove migration workflow
         run: |
