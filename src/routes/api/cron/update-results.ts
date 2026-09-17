@@ -24,22 +24,8 @@ export const Route = createFileRoute("/api/cron/update-results")({
 
           if (settingsError) throw new Error(settingsError.message);
 
-          if (!settings?.results_automation_enabled || settings.results_automation_interval === "off") {
+          if (!settings?.results_automation_enabled || settings.results_automation_interval !== "24h") {
             return Response.json({ ok: true, job: "update-results", skipped: true, reason: "automation_disabled" });
-          }
-
-          // The current Vercel Hobby schedule is daily. Keep the configurable
-          // 4h/6h/12h values stored for future higher-frequency scheduling,
-          // but never pretend they are being executed more frequently than the
-          // deployed Vercel cron actually triggers.
-          if (settings.results_automation_interval !== "24h") {
-            return Response.json({
-              ok: true,
-              job: "update-results",
-              skipped: true,
-              reason: "selected_interval_requires_higher_frequency_vercel_cron",
-              interval: settings.results_automation_interval,
-            });
           }
 
           const now = new Date();
