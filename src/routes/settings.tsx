@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { getEngineSettings, setDataEngine, setSportKeys, setOddsApiKeysList } from "@/lib/engine-settings.functions";
+import { ResultsAutomationCard } from "@/components/ResultsAutomationCard";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
@@ -231,6 +232,8 @@ function Settings() {
           <span>This app has no login system, so anyone who has this page's URL can view slot status and set new keys. Don't share this link.</span>
         </div>
       </div>
+
+      <ResultsAutomationCard />
 
       <DataEngineCard />
         
