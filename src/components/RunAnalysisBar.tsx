@@ -30,8 +30,8 @@ function todayISO() {
 
 export function RunAnalysisBar() {
   const [date, setDate] = useState(todayISO());
-  const [timeframeHours, setTimeframeHours] = useState(12);
-  const [maxMatches, setMaxMatches] = useState(80);
+  const [timeframeHours, setTimeframeHours] = useState(24);
+  const [maxMatches, setMaxMatches] = useState(100);
   // Recommended defaults for EV research: widen the odds range rather than narrow it —
   // very short odds can't carry meaningful EV even when "correct," very long odds are
   // where model error compounds.
@@ -241,9 +241,9 @@ export function RunAnalysisBar() {
             id="scan-max-matches"
             type="number"
             min={1}
-            max={80}
+            max={100}
             value={maxMatches}
-            onChange={(e) => setMaxMatches(Math.max(1, Math.min(80, Number(e.target.value) || 1)))}
+            onChange={(e) => setMaxMatches(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
             className="h-9 w-full rounded-md bg-secondary border border-border px-3 text-sm font-mono"
           />
         </Field>
