@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { getAdminApiStatus, setAdminApiKey, getAdminEngineSettings, setAdminDataEngine, setAdminSportKeys, setAdminOddsApiKeys } from "@/lib/admin.functions";
 import { supabase } from "@/integrations/supabase/client";
-import { CheckCircle2, XCircle, Lock, AlertTriangle } from "lucide-react";
+import { CheckCircle2, XCircle, Lock, LogOut } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -207,13 +207,37 @@ function DataEngineCard() {
 }
 
 function Settings() {
+  const navigate = useNavigate();
   const fn = useServerFn(getAdminApiStatus);
+  const [signingOut, setSigningOut] = useState(false);
+
+  async function signOut() {
+    setSigningOut(true);
+    try {
+      await supabase.auth.signOut();
+      await navigate({ to: "/admin-login" });
+    } finally {
+      setSigningOut(false);
+    }
+  }
   const q = useQuery({ queryKey: ["api-status"], queryFn: async () => { const { data: session } = await supabase.auth.getSession(); if (!session.session?.access_token) throw new Error("Authentication required"); return fn({ data: { accessToken: session.session.access_token } }); } });
   const slots = q.data?.slots;
 
   return (
     <section className="mx-auto max-w-3xl px-4 sm:px-6 py-10 space-y-6">
-      <h1 className="text-3xl font-bold">Settings</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-3xl font-bold">Settings</h1>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={signOut}
+          disabled={signingOut}
+          className="shrink-0"
+        >
+          <LogOut className="h-4 w-4 mr-2" />
+          {signingOut ? "Signing out…" : "Sign out"}
+        </Button>
+      </div>
 
       <div className="glass rounded-xl p-6">
         <h2 className="text-sm uppercase tracking-widest text-muted-foreground mb-3">iSportsAPI Status</h2>
@@ -227,11 +251,7 @@ function Settings() {
           <Lock className="h-3.5 w-3.5 mt-0.5 shrink-0 text-neon" />
           <span>Keys are stored server-side and never sent to the browser. Scans use slot 1 first, and automatically fail over to slot 2 if slot 1 hits its quota.</span>
         </div>
-        <div className="mt-2 text-xs text-gold flex items-start gap-2">
-          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-          <span>This app has no login system, so anyone who has this page's URL can view slot status and set new keys. Don't share this link.</span>
         </div>
-      </div>
 
       <ResultsAutomationCard />
 
