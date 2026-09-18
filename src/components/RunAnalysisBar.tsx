@@ -38,7 +38,7 @@ export function RunAnalysisBar() {
   const [minOdds, setMinOdds] = useState(1.5);
   const [maxOdds, setMaxOdds] = useState(3.5);
   const [oddsBounds, setOddsBounds] = useState<[number, number]>([1, 5]);
-  const [trustedOnly, setTrustedOnly] = useState(true);
+  const [trustedOnly, setTrustedOnly] = useState(false);
   const [refresh, setRefresh] = useState(false);
   const [betType, setBetType] = useState<string>("all");
   // Threshold values + adjustable slider bounds for each.
