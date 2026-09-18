@@ -60,8 +60,8 @@ export const Route = createFileRoute("/api/analyze-stream")({
       GET: async ({ request }) => {
         const url = new URL(request.url);
         const date = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
-        const timeframeHours = Number(url.searchParams.get("timeframeHours") ?? 12);
-        const maxMatches = Math.max(1, Math.min(80, Number(url.searchParams.get("maxMatches") ?? 50)));
+        const timeframeHours = Number(url.searchParams.get("timeframeHours") ?? 24);
+        const maxMatches = Math.max(1, Math.min(100, Number(url.searchParams.get("maxMatches") ?? 100)));
         const minOdds = Number(url.searchParams.get("minOdds") ?? 1);
         const trustedOnly = url.searchParams.get("trustedOnly") !== "false";
         const refresh = url.searchParams.get("refresh") === "true";
