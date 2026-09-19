@@ -30,21 +30,29 @@ export const getMonthlyPickPerformance = createServerFn({ method: "POST" })
     }
 
     const { data: preds, error: predsError } = idsNeeded.size
-      ? await supabaseAdmin.from("predictions").select("id, is_correct").in("id", Array.from(idsNeeded))
+      ? await supabaseAdmin.from("predictions").select("id, is_correct, market_odds").in("id", Array.from(idsNeeded))
       : { data: [] as Array<{ id: string; is_correct: boolean | null }>, error: null };
     if (predsError) throw new Error(predsError.message);
 
     const byId = new Map((preds ?? []).map((p) => [String(p.id), p]));
-    const byMonth: Record<string, { singleWin: number; singleLoss: number; singlePending: number; comboWin: number; comboLoss: number; comboPending: number }> = {};
+    // P/L is reported in fixed-stake units: a winning single returns (odds - 1) units,
+    // a loss costs 1 unit. Combo profit uses the product of both leg odds minus 1 unit.
+    const byMonth: Record<string, { singleWin: number; singleLoss: number; singlePending: number; singleProfitLoss: number; comboWin: number; comboLoss: number; comboPending: number; comboProfitLoss: number }> = {};
 
     for (const lock of locks) {
       const monthKey = String(lock.day).slice(0, 7);
-      const month = (byMonth[monthKey] ??= { singleWin: 0, singleLoss: 0, singlePending: 0, comboWin: 0, comboLoss: 0, comboPending: 0 });
+      const month = (byMonth[monthKey] ??= { singleWin: 0, singleLoss: 0, singlePending: 0, singleProfitLoss: 0, comboWin: 0, comboLoss: 0, comboPending: 0, comboProfitLoss: 0 });
 
       const single = lock.single_prediction_id ? byId.get(String(lock.single_prediction_id)) : undefined;
       if (single) {
-        if (single.is_correct === true) month.singleWin++;
-        else if (single.is_correct === false) month.singleLoss++;
+        if (single.is_correct === true) {
+          month.singleWin++;
+          const odds = Number(single.market_odds);
+          if (Number.isFinite(odds) && odds > 0) month.singleProfitLoss += odds - 1;
+        } else if (single.is_correct === false) {
+          month.singleLoss++;
+          month.singleProfitLoss -= 1;
+        }
         else month.singlePending++;
       }
 
@@ -54,8 +62,17 @@ export const getMonthlyPickPerformance = createServerFn({ method: "POST" })
         const graded1 = leg1.is_correct === true || leg1.is_correct === false;
         const graded2 = leg2.is_correct === true || leg2.is_correct === false;
         if (graded1 && graded2) {
-          if (leg1.is_correct === true && leg2.is_correct === true) month.comboWin++;
-          else month.comboLoss++;
+          if (leg1.is_correct === true && leg2.is_correct === true) {
+            month.comboWin++;
+            const odds1 = Number(leg1.market_odds);
+            const odds2 = Number(leg2.market_odds);
+            if (Number.isFinite(odds1) && Number.isFinite(odds2) && odds1 > 0 && odds2 > 0) {
+              month.comboProfitLoss += (odds1 * odds2) - 1;
+            }
+          } else {
+            month.comboLoss++;
+            month.comboProfitLoss -= 1;
+          }
         } else {
           month.comboPending++;
         }
@@ -74,6 +91,8 @@ export const getMonthlyPickPerformance = createServerFn({ method: "POST" })
           comboWin: s.comboWin,
           comboLoss: s.comboLoss,
           comboPending: s.comboPending,
+          singleProfitLoss: Math.round(s.singleProfitLoss * 100) / 100,
+          comboProfitLoss: Math.round(s.comboProfitLoss * 100) / 100,
           comboWinRate: s.comboWin + s.comboLoss > 0 ? Math.round((s.comboWin / (s.comboWin + s.comboLoss)) * 100) : null,
         })),
     };
