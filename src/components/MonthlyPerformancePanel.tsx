@@ -11,11 +11,14 @@ function formatMonth(key: string) {
   return `${MONTH_NAMES[Number(m) - 1]} ${y}`;
 }
 
-function Row({ label, win, loss, pending, winRate }: { label: string; win: number; loss: number; pending: number; winRate: number | null }) {
+function Row({ label, win, loss, pending, winRate, profitLoss }: { label: string; win: number; loss: number; pending: number; winRate: number | null; profitLoss: number }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs py-1">
       <span className="text-muted-foreground">{label}</span>
       <div className="flex items-center gap-2 font-mono">
+        <span className={cn(profitLoss >= 0 ? "text-neon" : "text-destructive")}>
+          {profitLoss >= 0 ? "+" : ""}{profitLoss.toFixed(2)}u
+        </span>
         <span className="text-neon">{win}W</span>
         <span className="text-destructive">{loss}L</span>
         {pending > 0 && <span className="text-muted-foreground">{pending}P</span>}
@@ -59,8 +62,8 @@ export function MonthlyPerformancePanel() {
               {q.data.months.map((m: any) => (
                 <div key={m.month} className="pb-2 border-b border-border/40 last:border-0 last:pb-0">
                   <div className="text-[11px] font-semibold mb-1">{formatMonth(m.month)}</div>
-                  <Row label="Single" win={m.singleWin} loss={m.singleLoss} pending={m.singlePending} winRate={m.singleWinRate} />
-                  <Row label="Combo" win={m.comboWin} loss={m.comboLoss} pending={m.comboPending} winRate={m.comboWinRate} />
+                  <Row label="Single" win={m.singleWin} loss={m.singleLoss} pending={m.singlePending} winRate={m.singleWinRate} profitLoss={m.singleProfitLoss ?? 0} />
+                  <Row label="Combo" win={m.comboWin} loss={m.comboLoss} pending={m.comboPending} winRate={m.comboWinRate} profitLoss={m.comboProfitLoss ?? 0} />
                 </div>
               ))}
             </div>
