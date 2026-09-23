@@ -36,7 +36,7 @@ export function RunAnalysisBar() {
   // very short odds can't carry meaningful EV even when "correct," very long odds are
   // where model error compounds.
   const [minOdds, setMinOdds] = useState(1.5);
-  const [maxOdds, setMaxOdds] = useState(3.5);
+  const [maxOdds, setMaxOdds] = useState(2.3);
   const [oddsBounds, setOddsBounds] = useState<[number, number]>([1, 5]);
   const [trustedOnly, setTrustedOnly] = useState(false);
   const [refresh, setRefresh] = useState(false);
