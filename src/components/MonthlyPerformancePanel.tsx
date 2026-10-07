@@ -1,3 +1,4 @@
+import { adminAccessToken } from "@/lib/admin-session";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
@@ -37,7 +38,7 @@ export function MonthlyPerformancePanel() {
   const [open, setOpen] = useState(false);
   const q = useQuery({
     queryKey: ["monthly-pick-performance"],
-    queryFn: () => fn({ data: { months: 6 } }),
+    queryFn: async () => fn({ data: { accessToken: await adminAccessToken(), months: 6 } }),
     enabled: open,
   });
 

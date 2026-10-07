@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { updateAllPendingResults } from "@/lib/predictions.functions";
+import { updateAllPendingResultsInternal } from "@/lib/predictions.functions";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 async function isAuthorized(request: Request): Promise<boolean> {
@@ -34,7 +34,7 @@ export const Route = createFileRoute("/api/cron/update-results")({
             return Response.json({ ok: true, job: "update-results", skipped: true, reason: "not_due", lastRun: lastRun.toISOString() });
           }
 
-          const result = await updateAllPendingResults({ data: {} });
+          const result = await updateAllPendingResultsInternal();
 
           const { error: markError } = await supabaseAdmin
             .from("engine_settings")

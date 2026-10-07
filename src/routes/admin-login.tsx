@@ -120,7 +120,7 @@ function AdminLogin() {
     setLoading(true); setError(null);
     try {
       const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google", options: { redirectTo: `${window.location.origin}/admin-login` },
+        provider: "google", options: { redirectTo: "https://edge-bet-analytics.vercel.app/admin-login" },
       });
       if (error) throw error;
     } catch (err) {

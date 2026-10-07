@@ -70,6 +70,7 @@ function isTrusted(name?: string) {
 const ISPORTS_NUMERIC_RE = /^(?:\d+|goaloo:\d+)$/;
 
 const RunInput = z.object({
+  accessToken: z.string().min(20),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   timeframeHours: z.number().int().min(1).max(48).optional(),
   maxMatches: z.number().int().min(1).max(40).optional(),
@@ -85,6 +86,7 @@ const MATCH_TYPES = new Set(["match_winner","over_2_5_goals"]);
 export const runAnalysis = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RunInput.parse(d ?? {}))
   .handler(async ({ data }) => {
+    await requireAdmin(data.accessToken);
     const date = data.date ?? new Date().toISOString().slice(0, 10);
     const timeframeHours = data.timeframeHours ?? 12;
     const maxMatches = data.maxMatches ?? 15;
@@ -549,8 +551,9 @@ export const getApiUsageToday = createServerFn({ method: "GET" }).handler(async 
 });
 
 export const updateResults = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => z.object({ analysisId: z.string() }).parse(d))
+  .inputValidator((d: unknown) => z.object({ analysisId: z.string(), accessToken: z.string().min(20) }).parse(d))
   .handler(async ({ data }) => {
+    await requireAdmin(data.accessToken);
     const { data: preds, error } = await supabaseAdmin
       .from("predictions")
       .select("*")
@@ -648,9 +651,15 @@ export const updateResults = createServerFn({ method: "POST" })
   });
 
 export const updateAllPendingResults = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => z.object({ apiKey: z.union([z.literal(1), z.literal(2)]).optional() }).parse(d ?? {}))
+  .inputValidator((d: unknown) => z.object({ accessToken: z.string().min(20), apiKey: z.union([z.literal(1), z.literal(2)]).optional() }).parse(d))
   .handler(async ({ data }) => {
-  const forced = data.apiKey ?? null;
+    await requireAdmin(data.accessToken);
+    return updateAllPendingResultsInternal(data.apiKey);
+  });
+
+// Server-only implementation: cron authorizes its request before calling this.
+export async function updateAllPendingResultsInternal(apiKey?: 1 | 2) {
+  const forced = apiKey ?? null;
   if (forced) setForcedKey(forced);
   try {
   const { data: preds, error } = await supabaseAdmin
@@ -749,7 +758,8 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
   } finally {
     if (forced) setForcedKey(null);
   }
-});
+}
+
 
 // ---- Single / Combo of the Day ----
 const DAILY_PICK_EV_CEILING = 0.40;
@@ -809,10 +819,12 @@ export async function lockDailyBestPickIfNeeded(): Promise<void> {
 
 export const getDailyPicks = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => z.object({
+    accessToken: z.string().min(20),
     page: z.number().int().min(1).optional(),
     pageSize: z.number().int().min(1).max(60).optional(),
   }).parse(d ?? {}))
   .handler(async ({ data }) => {
+    await requireAdmin(data.accessToken);
     const page = data.page ?? 1;
     const pageSize = data.pageSize ?? 14;
 

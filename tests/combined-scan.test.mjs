@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {registerHooks} from 'node:module';
 const modules={
+ '@/lib/admin-auth.server':`export async function requireAdmin(token){if(token!=='test-admin-token-valid')throw new Error('unauthorized')}`,
  '@tanstack/react-router':`export const createFileRoute=()=>x=>x;`,
  '@/integrations/supabase/client.server':`export const supabaseAdmin={};`,
  '@/lib/goaloo-analysis':`export const matchSavedResult=()=>null;`,
@@ -11,9 +12,12 @@ const modules={
 };
 registerHooks({resolve(s,c,next){if(modules[s])return {url:'data:text/javascript,'+encodeURIComponent(modules[s]),shortCircuit:true};return next(s,c)}});
 const {Route}=await import('../src/routes/api/analyze-stream.ts');
+globalThis.scanOrder=[];
+const denied=await Route.server.handlers.GET({request:new Request('https://example.test/api/analyze-stream')});
+assert.equal(denied.status,401);assert.deepEqual(globalThis.scanOrder,[]);
 for(const failOdds of [false,true]){
  globalThis.scanOrder=[];globalThis.failOdds=failOdds;
- const response=await Route.server.handlers.GET({request:new Request('https://example.test/api/analyze-stream?date=2099-10-07&engine=combined')});
+ const response=await Route.server.handlers.GET({request:new Request('https://example.test/api/analyze-stream?date=2099-10-07&engine=combined',{headers:{authorization:'Bearer test-admin-token-valid'}})});
  const events=(await response.text()).trim().split('\n').map(JSON.parse);
  assert.deepEqual(globalThis.scanOrder,['goaloo','odds','select']);
  assert.equal(events.filter(e=>e.event==='done').length,1);

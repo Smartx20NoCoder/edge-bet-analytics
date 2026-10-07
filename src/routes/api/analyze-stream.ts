@@ -1,3 +1,4 @@
+import { requireAdmin } from "@/lib/admin-auth.server";
 import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { matchSavedResult } from "@/lib/goaloo-analysis";
@@ -59,6 +60,8 @@ export const Route = createFileRoute("/api/analyze-stream")({
   server: {
     handlers: {
       GET: async ({ request }) => {
+        try { await requireAdmin(request.headers.get("authorization")?.replace(/^Bearer /, "") ?? ""); }
+        catch { return Response.json({ error: "Administrator access required" }, { status: 401 }); }
         const url = new URL(request.url);
         const date = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
         const timeframeHours = Number(url.searchParams.get("timeframeHours") ?? 24);

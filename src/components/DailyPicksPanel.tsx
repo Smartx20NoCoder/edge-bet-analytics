@@ -1,3 +1,4 @@
+import { adminAccessToken } from "@/lib/admin-session";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
@@ -93,7 +94,7 @@ function DayCard({ d }: { d: any }) {
 export function DailyPicksPanel() {
   const fn = useServerFn(getDailyPicks);
   const [page, setPage] = useState(1);
-  const q = useQuery({ queryKey: ["daily-picks", page], queryFn: () => fn({ data: { page, pageSize: 14 } }) });
+  const q = useQuery({ queryKey: ["daily-picks", page], queryFn: async () => fn({ data: { accessToken: await adminAccessToken(), page, pageSize: 14 } }) });
   const days = q.data?.days ?? [];
   const totalPages = q.data?.totalPages ?? 1;
 

@@ -1,3 +1,4 @@
+import { adminAccessToken } from "@/lib/admin-session";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -89,7 +90,8 @@ export function RunAnalysisBar() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await fetch(`/api/analyze-stream?${params}`, { signal: ctrl.signal });
+      const res = await fetch(`/api/analyze-stream?${params}`, { signal: ctrl.signal, headers: { Authorization: `Bearer ${await adminAccessToken()}` } });
+      if (!res.ok) throw new Error("Administrator access required or scan request failed");
       if (!res.body) throw new Error("No stream body");
       const reader = res.body.getReader();
       const decoder = new TextDecoder();

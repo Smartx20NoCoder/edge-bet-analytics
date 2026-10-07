@@ -1,3 +1,4 @@
+import { adminAccessToken, useAdminAccess } from "@/lib/admin-session";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -100,6 +101,7 @@ function buildMonthOptions() {
 const MONTH_OPTIONS = buildMonthOptions();
 
 function HistoryPage() {
+  const isAdmin = useAdminAccess();
   const fa = useServerFn(getAnalyses);
   const fp = useServerFn(getPredictions);
   const updateAll = useServerFn(updateAllPendingResults);
@@ -129,10 +131,10 @@ function HistoryPage() {
   const clearDates = () => { setFromDate(""); setToDate(""); setSelectedMonth(""); setPage(1); };
 
   const updateMut = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const v = typeof window !== "undefined" ? window.localStorage.getItem("betedge.apiKey") : null;
       const apiKey: 1 | 2 = v === "2" ? 2 : 1;
-      return updateAll({ data: { apiKey } });
+      return updateAll({ data: { apiKey, accessToken: await adminAccessToken() } });
     },
     onSuccess: (r: any) => {
       const failedNote = r.failedDates ? ` (${r.failedDates} date${r.failedDates === 1 ? "" : "s"} couldn't be checked — see logs.)` : "";
@@ -160,10 +162,10 @@ function HistoryPage() {
           <h1 className="text-3xl font-bold">Analysis <span className="text-neon">History</span></h1>
           <p className="text-sm text-muted-foreground mt-1">Persistent record of every scan. Update FT results without re-running predictions.</p>
         </div>
-        <Button onClick={() => updateMut.mutate()} disabled={updateMut.isPending}>
+        {isAdmin && <Button onClick={() => updateMut.mutate()} disabled={updateMut.isPending}>
           {updateMut.isPending ? <Loader2 className="animate-spin h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}
           Update Results
-        </Button>
+        </Button>}
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-1.5">

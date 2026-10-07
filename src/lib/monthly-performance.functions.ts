@@ -1,16 +1,18 @@
+import { requireAdmin } from "./admin-auth.server";
 import { createServerFn } from "@tanstack/react-start";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 export const getMonthlyPickPerformance = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => {
-    const value = (d ?? {}) as { months?: unknown };
+    const value = (d ?? {}) as { months?: unknown; accessToken?: string };
     const months = value.months == null ? 6 : Number(value.months);
     if (!Number.isInteger(months) || months < 1 || months > 12) {
       throw new Error("months must be an integer from 1 to 12");
     }
-    return { months };
+    return { months, accessToken: value.accessToken ?? "" };
   })
   .handler(async ({ data }) => {
+    await requireAdmin(data.accessToken);
     const since = new Date();
     since.setMonth(since.getMonth() - data.months);
     const sinceStr = since.toISOString().slice(0, 10);
