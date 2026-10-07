@@ -77,7 +77,7 @@ export function AppLayout() {
         <Outlet />
       </main>
       <footer className="border-t py-6 px-3 text-center text-xs text-muted-foreground">
-        Powered by real iSportsAPI data · For informational use only · Bet responsibly.
+        Powered by Goaloo and The Odds API data · For informational use only · Bet responsibly.
       </footer>
     </div>
   );

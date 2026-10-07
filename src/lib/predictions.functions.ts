@@ -1,7 +1,8 @@
+import { matchSavedResult } from "./goaloo-analysis";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { fetchMatchAnalysis, fetchResultsByDate, fetchScheduleByDate, fetchLiveOdds, setForcedKey } from "./isports.server";
+import { fetchMatchAnalysis, fetchResultsByDate, fetchScheduleByDate, fetchLiveOdds, setForcedKey } from "./goaloo.server";
 import { gradePrediction, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "./predictions.server";
 import { fetchOddsApiResults } from "./oddsapi.server";
 import { requireAdmin } from "./admin-auth.server";
@@ -65,7 +66,7 @@ function isTrusted(name?: string) {
 // no hyphens — NOT standard UUIDs — so checking for hyphenated UUID format was wrong and
 // silently misrouted every Odds API prediction into the iSports grading branch, where it
 // could never be found. Numeric-only is the reliable signal.
-const ISPORTS_NUMERIC_RE = /^\d+$/;
+const ISPORTS_NUMERIC_RE = /^(?:\d+|goaloo:\d+)$/;
 
 const RunInput = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -309,7 +310,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
         predictions_generated: finalPreds.length,
         avg_confidence: Math.round(avg * 100) / 100,
         status: "completed",
-        notes: JSON.stringify({ engine: "isports", date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount }),
+        notes: JSON.stringify({ engine: "goaloo", date, timeframeHours, maxMatches, minOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, noOddsCount }),
       })
       .select()
       .single();
@@ -359,13 +360,13 @@ export const getAnalyses = createServerFn({ method: "POST" })
       // Tags which engine produced this scan (isports / dual_free) so the UI can badge
       // each row — the Odds API scan already self-tagged this in its notes; the iSports
       // scan path was updated to do the same for parity.
-      let dataEngine: "isports" | "dual_free" | null = null;
+      let dataEngine: "isports" | "goaloo" | "dual_free" | null = null;
       try {
         const parsed = a.notes ? JSON.parse(a.notes) : null;
         if (parsed && typeof parsed.trustedOnly === "boolean") {
           leagueScope = parsed.trustedOnly ? "major" : "all";
         }
-        if (parsed && (parsed.engine === "isports" || parsed.engine === "dual_free")) {
+        if (parsed && (parsed.engine === "isports" || parsed.engine === "goaloo" || parsed.engine === "dual_free")) {
           dataEngine = parsed.engine;
         }
       } catch {}
@@ -496,10 +497,12 @@ export const checkApiStatus = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => z.object({ accessToken: z.string().min(20) }).parse(d))
   .handler(async ({ data }) => {
     await requireAdmin(data.accessToken);
-  const { getApiKeySlotStatus } = await import("./isports.server");
-  const slots = await getApiKeySlotStatus();
-  const hasKey = slots.slot1 || slots.slot2;
-  return { hasKey, live: hasKey, error: hasKey ? null : "no key", slots };
+  try {
+    const fixtures = await fetchScheduleByDate(new Date().toISOString().slice(0,10));
+    return { hasKey:true, live:true, error:null, fixtures:fixtures.length, slots: {slot1:false,slot2:false,slot1Source:"none" as const,slot2Source:"none" as const} };
+  } catch(error:any) {
+    return {hasKey:true,live:false,error:error.message,fixtures:0,slots: {slot1:false,slot2:false,slot1Source:"none" as const,slot2Source:"none" as const}};
+  }
 });
 
 export const setApiKey = createServerFn({ method: "POST" })
@@ -582,7 +585,7 @@ export const updateResults = createServerFn({ method: "POST" })
       const map = new Map(results.map((r) => [r.matchId, r]));
       console.log(`[updateResults] date=${date} predictions=${group.length} finishedResults=${results.length}`);
       for (const p of group) {
-        const r = map.get(String(p.match_id));
+        const r = matchSavedResult(p, results);
         if (!r) { noResultFound++; continue; }
         if (r.homeScore == null && r.awayScore == null) { skipped++; continue; }
         const correct = gradePrediction(p.prediction_type, p.selection, r);
@@ -682,7 +685,7 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
     }
     const map = new Map(results.map((r) => [r.matchId, r]));
     for (const p of group) {
-      const r = map.get(String(p.match_id));
+      const r = matchSavedResult(p, results);
       if (!r || (r.homeScore == null && r.awayScore == null)) { stillPending++; continue; }
       const correct = gradePrediction(p.prediction_type, p.selection, r);
       const totalC = (r.homeCorners ?? 0) + (r.awayCorners ?? 0);

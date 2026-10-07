@@ -54,15 +54,6 @@ export function RunAnalysisBar() {
   const [matchWinnerBounds, setMatchWinnerBounds] = useState<[number, number]>([45, 75]);
   const [over25Floor, setOver25Floor] = useState(55);
   const [over25Bounds, setOver25Bounds] = useState<[number, number]>([50, 90]);
-  const [apiKey, setApiKey] = useState<1 | 2>(() => {
-    if (typeof window === "undefined") return 1;
-    const v = window.localStorage.getItem("betedge.apiKey");
-    return v === "2" ? 2 : 1;
-  });
-  useEffect(() => {
-    if (typeof window !== "undefined") window.localStorage.setItem("betedge.apiKey", String(apiKey));
-  }, [apiKey]);
-
   const [open, setOpen] = useState(false);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<LogEntry[]>([]);
@@ -71,25 +62,6 @@ export function RunAnalysisBar() {
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const qc = useQueryClient();
-
-  const fetchUsage = useServerFn(getApiUsageToday);
-  const usage = useQuery({
-    queryKey: ["api-usage-today"],
-    queryFn: () => fetchUsage(),
-    refetchInterval: 60_000,
-  });
-
-  const failoverNotifiedRef = useRef<string | null>(null);
-  useEffect(() => {
-    const f = usage.data?.failoverAt;
-    if (f && failoverNotifiedRef.current !== f) {
-      failoverNotifiedRef.current = f;
-      toast.warning("API Key 1 exhausted — switched to Key 2", {
-        description: "Counter has been reset to track usage on the new key.",
-        duration: 8000,
-      });
-    }
-  }, [usage.data?.failoverAt]);
 
   const append = (e: LogEntry) => {
     setLog((prev) => [...prev, e]);
@@ -107,7 +79,7 @@ export function RunAnalysisBar() {
       date, timeframeHours: String(timeframeHours), maxMatches: String(maxMatches),
       minOdds: String(minOdds), maxOdds: String(maxOdds),
       trustedOnly: String(trustedOnly), refresh: String(refresh),
-      betType, apiKey: String(apiKey),
+      betType,
       winRateFloor: String(winRateFloor / 100),
       drawRateCeil: String(drawRateCeil / 100),
       over25Floor: String(over25Floor),
@@ -288,32 +260,13 @@ export function RunAnalysisBar() {
         </label>
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
           <input type="checkbox" checked={refresh} onChange={(e) => setRefresh(e.target.checked)} className="accent-neon" />
-          Force re-fetch analysis (uses extra API calls)
+          Refresh Goaloo analysis
         </label>
         <div className="ml-auto flex items-center gap-3">
-          <div className="inline-flex items-center rounded-md border border-border overflow-hidden" role="group" aria-label="API Key selector">
-            {[1, 2].map((k) => (
-              <button
-                key={k}
-                onClick={() => setApiKey(k as 1 | 2)}
-                className={`px-2.5 h-7 text-[11px] font-mono transition-colors ${apiKey === k ? "bg-neon/15 text-neon" : "text-muted-foreground hover:text-foreground"}`}
-                title={`Force this scan to use API Key ${k} only`}
-              >
-                API {k}
-              </button>
-            ))}
-          </div>
-          <span className={`inline-flex items-center gap-1.5 px-2 h-7 rounded-md border text-[11px] font-mono ${
-            (usage.data?.count ?? 0) >= (usage.data?.limit ?? 200) * 0.9
-              ? "border-destructive/40 text-destructive bg-destructive/10"
-              : "border-neon/30 text-neon bg-neon/5"
-          }`} title="iSports API calls today">
-            <Radio className="h-3 w-3" />
-            {usage.data?.count ?? "—"}/{usage.data?.limit ?? 200} (Key {usage.data?.activeKey ?? 1})
-          </span>
+          <span className="text-xs text-neon">Goaloo · No API key required</span>
           <Button onClick={() => start("isports")} disabled={running} className="bg-neon text-neon-foreground hover:bg-neon/90">
             {running ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            {running ? "Scanning…" : "Run iSports Scan"}
+            {running ? "Scanning…" : "Run Goaloo Scan"}
             </Button>
           <Button onClick={() => start("dual_free")} disabled={running} variant="outline" className="border-gold/50 text-gold hover:bg-gold/10">
             {running ? <Loader2 className="animate-spin" /> : <RefreshCw />}

@@ -35,17 +35,17 @@ function formatScanLabel(iso: string): string {
   return `${dd} ${mon} ${yyyy} · ${hh}:${mm}`;
 }
 
-function DataEngineBadge({ engine }: { engine?: "isports" | "dual_free" | null }) {
+function DataEngineBadge({ engine }: { engine?: "isports" | "goaloo" | "dual_free" | null }) {
   if (!engine) return null;
-  const isIsports = engine === "isports";
+  const isIsports = engine !== "dual_free";
   return (
     <span
       className={`inline-flex items-center px-2 h-6 rounded-md border text-[11px] font-medium ${
         isIsports ? "border-neon/40 bg-neon/10 text-neon" : "border-gold/40 bg-gold/10 text-gold"
       }`}
-      title={isIsports ? "iSportsAPI — statistical model" : "Odds API — sharp-vs-soft line shopping"}
+      title={isIsports ? (engine === "goaloo" ? "Goaloo — statistical model" : "iSportsAPI — historical statistical model") : "Odds API — sharp-vs-soft line shopping"}
     >
-      {isIsports ? "iSportsAPI" : "Odds API"}
+      {isIsports ? (engine === "goaloo" ? "Goaloo" : "iSportsAPI") : "Odds API"}
     </span>
   );
 }

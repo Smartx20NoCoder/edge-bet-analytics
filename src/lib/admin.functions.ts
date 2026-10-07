@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireAdmin } from "./admin-auth.server";
+import { fetchScheduleByDate } from "./goaloo.server";
 import { setApiKeyForSlot, getApiKeySlotStatus } from "./isports.server";
 import { setOddsApiKeys, getOddsApiKeysStatus } from "./oddsapi.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
@@ -11,9 +12,11 @@ export const getAdminApiStatus = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => TokenInput.parse(d))
   .handler(async ({ data }) => {
     await requireAdmin(data.accessToken);
-    const slots = await getApiKeySlotStatus();
-    const hasKey = slots.slot1 || slots.slot2;
-    return { hasKey, live: hasKey, error: hasKey ? null : "no key", slots };
+    const slots = {slot1:false,slot2:false,slot1Source:"none" as const,slot2Source:"none" as const};
+    try {
+      await fetchScheduleByDate(new Date().toISOString().slice(0,10));
+      return {hasKey:true,live:true,error:null,slots};
+    } catch(e:any) {return {hasKey:true,live:false,error:e.message,slots};}
   });
 
 export const setAdminApiKey = createServerFn({ method: "POST" })

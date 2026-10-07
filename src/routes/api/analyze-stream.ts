@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { fetchMatchAnalysis, fetchScheduleByDate, fetchLiveOdds, setForcedKey, hasMainOdds } from "@/lib/isports.server";
+import { matchSavedResult } from "@/lib/goaloo-analysis";
+import { fetchMatchAnalysis, fetchScheduleByDate, fetchLiveOdds, setForcedKey, hasMainOdds } from "@/lib/goaloo.server";
 import { gradePrediction as _g, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "@/lib/predictions.server";
 import { lockDailyBestPickIfNeeded } from "@/lib/predictions.functions";
 import { runDualFreeScan, getOddsApiKeysStatus } from "@/lib/oddsapi.server";
@@ -89,35 +90,32 @@ export const Route = createFileRoute("/api/analyze-stream")({
               controller.enqueue(encoder.encode(JSON.stringify({ event, ...payload }) + "\n"));
             };
 
-            const isportsAvailable = !!process.env.ISPORTS_API_KEY;
+            const requestedEngine = url.searchParams.get("engine") ?? "goaloo";
+            const isportsAvailable = requestedEngine !== "dual_free";
+            let summary={matchesAnalyzed:0,predictionsGenerated:0};
             let oddsApiAvailable = false;
             try {
-              oddsApiAvailable = (await getOddsApiKeysStatus()).availableKeys > 0;
+              oddsApiAvailable = requestedEngine === "dual_free" && (await getOddsApiKeysStatus()).availableKeys > 0;
             } catch (e) {
               console.warn(`[analyze-stream] odds api key status check failed: ${e?.message ?? e}`);
             }
 
             if (!isportsAvailable && !oddsApiAvailable) {
-              send("error", { message: "No data source is configured — set an iSportsAPI key and/or Odds API key(s) in Settings." });
+              send("error", { message: "No Odds API key is available — configure it in Settings, or run a Goaloo scan." });
               controller.close();
               return;
             }
 
             async function runIsportsScan() {
-              if (forcedKey) {
-                setForcedKey(forcedKey);
-                send("status", { message: `Using API Key ${forcedKey} only (manual override — failover disabled).` });
-              }
-
               send("status", { message: `Fetching fixtures for ${date}…` });
               let all;
               try {
                 all = await fetchScheduleByDate(date);
               } catch (e) {
-                send("status", { message: `iSportsAPI schedule fetch failed: ${e?.message ?? e}` });
+                send("status", { message: `Goaloo schedule fetch failed: ${e?.message ?? e}` });
                 return;
               }
-              send("status", { message: `iSportsAPI returned ${all.length} total fixtures for ${date}.` });
+              send("status", { message: `Goaloo returned ${all.length} total fixtures for ${date}.` });
 
               const now = Date.now();
               const windowEnd = now + timeframeHours * 3600 * 1000;
@@ -135,7 +133,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 const hint = trustedOnly
                   ? "Try unchecking 'Major leagues only' or widening the timeframe."
                   : "Try widening the timeframe or picking a different date.";
-                send("status", { message: `iSportsAPI: no qualifying matches after filters. ${hint}` });
+                send("status", { message: `Goaloo: no qualifying matches after filters. ${hint}` });
                 return;
               }
 
@@ -151,22 +149,23 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 const ids = sortedPool.map((c) => String(c.matchId));
                 const { data: existing } = await supabaseAdmin
                   .from("predictions")
-                  .select("match_id")
-                  .in("match_id", ids);
+                  .select("match_id,home_team,away_team,kickoff")
+                  .gte("kickoff",new Date(now).toISOString())
+                  .lte("kickoff",new Date(windowEnd).toISOString());
                 const existingSet = new Set((existing ?? []).map((r) => String(r.match_id)));
-                dedupedPool = sortedPool.filter((c) => !existingSet.has(String(c.matchId)));
+                dedupedPool = sortedPool.filter((c) => !existingSet.has(String(c.matchId)) && !(existing ?? []).some(p=>matchSavedResult(p,[{matchId:c.matchId,homeName:c.homeName,awayName:c.awayName,kickoff:new Date(c.matchTime*1000).toISOString()}])));
                 skippedExisting = sortedPool.length - dedupedPool.length;
                 if (skippedExisting) {
                   send("status", { message: `Skipping ${skippedExisting} matches already predicted in a previous scan.` });
                 }
               }
               if (!dedupedPool.length) {
-                send("status", { message: `iSportsAPI: all ${sortedPool.length} qualifying matches were already predicted in earlier scans.` });
+                send("status", { message: `Goaloo: all ${sortedPool.length} qualifying matches were already predicted in earlier scans.` });
                 return;
               }
 
               // Filter out matches with no real live odds BEFORE spending an analysis slot
-              // on them. Most iSportsAPI fixtures on a given day have no odds coverage at
+              // on them. Most Goaloo fixtures on a given day have no odds coverage at
               // all — checking availability up front (instead of only discovering it after
               // full prediction generation, as before) means the maxMatches budget goes to
               // matches that can actually be priced into a real EV pick, not wasted on ones
@@ -175,27 +174,21 @@ export const Route = createFileRoute("/api/analyze-stream")({
               const candidates = [];
               let skippedNoOdds = 0;
               let checkedForOdds = 0;
-              for (const m of dedupedPool) {
-                if (candidates.length >= maxMatches) break;
-                checkedForOdds++;
-                let hasOdds = true;
-                try {
-                  hasOdds = await hasMainOdds(m.matchId);
-                } catch (e) {
-                  // Fails open — a flaky odds check shouldn't remove an otherwise-good match.
-                  hasOdds = true;
-                }
-                if (hasOdds) {
-                  candidates.push(m);
-                } else {
-                  skippedNoOdds++;
-                }
+              const scanDeadline = Date.now()+220000;
+              for (let offset=0; offset<dedupedPool.length && candidates.length<maxMatches && checkedForOdds<Math.max(maxMatches*3,100) && Date.now()<scanDeadline-90000; offset+=3) {
+                const group=dedupedPool.slice(offset,offset+Math.min(3,maxMatches-candidates.length));
+                const checks=await Promise.all(group.map(async m=>{
+                  checkedForOdds++;
+                  try { return await hasMainOdds(m.matchId); }
+                  catch(e:any) { send("status",{message:`Odds unavailable for ${m.homeName} vs ${m.awayName}: ${e.message}`}); return false; }
+                }));
+                group.forEach((m,i)=>{if(checks[i])candidates.push(m);else skippedNoOdds++;});
               }
               if (skippedNoOdds) {
                 send("status", { message: `Skipping ${skippedNoOdds} match(es) with no live odds available (checked ${checkedForOdds} matches to fill ${candidates.length} odds-covered slot${candidates.length === 1 ? "" : "s"}).` });
               }
               if (!candidates.length) {
-                send("status", { message: `iSportsAPI: none of the ${dedupedPool.length} qualifying matches have live odds available right now.` });
+                send("status", { message: `Goaloo: none of the ${dedupedPool.length} qualifying matches have live odds available right now.` });
                 return;
               }
               send("status", {
@@ -206,12 +199,14 @@ export const Route = createFileRoute("/api/analyze-stream")({
               const scanStartedAt = new Date().toISOString();
 
               const predictions = [];
+              let matchesChecked=0;
               const seen = new Set();
-              for (let i = 0; i < candidates.length; i++) {
+              const analyzeCandidate = async (i:number) => {
                 const m = candidates[i];
+                matchesChecked++;
                 if (seen.has(String(m.matchId))) {
                   send("status", { message: `Skipping duplicate match ${m.homeName} vs ${m.awayName}.` });
-                  continue;
+                  return;
                 }
                 seen.add(String(m.matchId));
                 send("match", {
@@ -279,10 +274,10 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     error: e?.message ?? "failed",
                   });
                 }
-              // Staggered pause between matches on top of the low-level request throttle —
-              // gives the trial iSportsAPI tier room to breathe so scans complete fully
-              // instead of stalling/rushing partway through on larger match counts.
-              await new Promise((r) => setTimeout(r, 1000));                                
+              };
+              for(let i=0;i<candidates.length;i+=3){
+                if(Date.now()>=scanDeadline){send("status",{message:"Time limit reached. Completed predictions will be saved; run another scan for the remaining matches."});break;}
+                await Promise.all(candidates.slice(i,i+3).map((_,j)=>analyzeCandidate(i+j)));
               }
 
               send("status", { message: "Generating final predictions…" });
@@ -386,7 +381,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
               }
 
               if (!finalPreds.length) {
-                send("status", { message: "iSportsAPI: no predictions generated this scan." });
+                send("status", { message: "Goaloo: no predictions generated this scan." });
                 return;
               }
 
@@ -400,27 +395,29 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 .insert({
                   league_id: null,
                   league_name: null,
-                  matches_analyzed: candidates.length,
+                  matches_analyzed: matchesChecked,
                   predictions_generated: finalPreds.length,
                   avg_confidence: Math.round(avg * 100) / 100,
                   status: "completed",
-                  notes: JSON.stringify({ engine: "isports", date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, skippedNoOdds, noOddsCount, hedgedCount, winRateFloor, drawRateCeil, over25Floor, matchWinnerFloor, doubleChanceFloor, cornersFloor }),
+                  notes: JSON.stringify({ engine: "goaloo", date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, skippedNoOdds, noOddsCount, hedgedCount, winRateFloor, drawRateCeil, over25Floor, matchWinnerFloor, doubleChanceFloor, cornersFloor }),
                 })
                 .select()
                 .single();
               if (aErr || !analysisRow) {
-                send("status", { message: `iSportsAPI: failed to save scan: ${aErr?.message ?? "unknown error"}` });
+                send("status", { message: `Goaloo: failed to save scan: ${aErr?.message ?? "unknown error"}` });
                 return;
               }
 
-              await supabaseAdmin
+              const {error:predictionError}=await supabaseAdmin
                 .from("predictions")
                 .insert(finalPreds.map((p) => ({ ...p, analysis_id: analysisRow.id })));
+              if(predictionError) throw new Error(`Predictions could not be saved: ${predictionError.message}`);
+              summary={matchesAnalyzed:matchesChecked,predictionsGenerated:finalPreds.length};
 
               await lockDailyBestPickIfNeeded();
 
               send("status", {
-                message: `iSportsAPI scan complete: ${finalPreds.length} prediction(s) from ${candidates.length} matches.`,
+                message: `Goaloo scan complete: ${finalPreds.length} prediction(s) from ${candidates.length} matches.`,
                 analysisId: analysisRow.id,
               });
               if (forcedKey) setForcedKey(null);
@@ -428,10 +425,10 @@ export const Route = createFileRoute("/api/analyze-stream")({
 
             try {
               if (isportsAvailable) {
-                send("status", { message: "— iSportsAPI scan starting —" });
+                send("status", { message: "— Goaloo scan starting —" });
                 await runIsportsScan();
               } else {
-                send("status", { message: "iSportsAPI not configured — skipping." });
+                send("status", { message: "Goaloo not configured — skipping." });
               }
 
               if (oddsApiAvailable) {
@@ -447,13 +444,13 @@ export const Route = createFileRoute("/api/analyze-stream")({
                     onEvent: send,
                   });
                 } catch (e) {
-                  send("status", { message: `Odds API scan failed: ${e?.message ?? e} — iSportsAPI results (if any) are unaffected.` });
+                  send("status", { message: `Odds API scan failed: ${e?.message ?? e} — Goaloo results (if any) are unaffected.` });
                 }
               } else {
                 send("status", { message: "Odds API not configured — skipping." });
               }
 
-              send("done", { message: "Scan complete." });
+              if(isportsAvailable) send("done", { message: "Scan complete.", ...summary });
             } catch (e) {
               send("error", { message: e?.message ?? "scan failed" });
             } finally {

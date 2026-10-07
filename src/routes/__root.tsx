@@ -96,7 +96,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
           "@type": "Organization",
           name: "BetEdge AI",
           url: "/",
-          description: "Football analytics and prediction terminal powered by live iSportsAPI data.",
+          description: "Football analytics and prediction terminal powered by Goaloo and The Odds API data.",
         }),
       },
       {
