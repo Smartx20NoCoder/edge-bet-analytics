@@ -64,7 +64,7 @@ export async function fetchResultsByDate(date: string): Promise<GoalooResult[]> 
     matchId:`goaloo:${f.id}`,homeName:f.home,awayName:f.away,kickoff:f.kickoff,
     homeScore: Number.isInteger(f.raw[8])?f.raw[8]:null,awayScore:Number.isInteger(f.raw[9])?f.raw[9]:null,
     // Missing corner values remain null; never settle corners with an invented zero.
-    homeCorners:Number.isInteger(f.raw[23])?f.raw[23]:null,awayCorners:Number.isInteger(f.raw[24])?f.raw[24]:null,status:'FT',
+    homeCorners:Number.isInteger(f.raw[23])&&Number.isInteger(f.raw[24])&&f.raw[23]+f.raw[24]>0?f.raw[23]:null,awayCorners:Number.isInteger(f.raw[23])&&Number.isInteger(f.raw[24])&&f.raw[23]+f.raw[24]>0?f.raw[24]:null,status:'FT',
   })).filter(r=>r.homeScore!==null&&r.awayScore!==null);
 }
 // Kept as a compatibility shim for older callers; Goaloo requires no API key.
