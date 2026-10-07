@@ -16,10 +16,20 @@ const TYPE_LABEL: Record<string, string> = {
 function PickRow({ p, compact }: { p: any; compact?: boolean }) {
   const ev = p.expected_value != null ? Number(p.expected_value) : null;
   const graded = p.is_correct !== null && p.is_correct !== undefined;
+  const kickoff = p.kickoff ? new Date(p.kickoff) : null;
+  const validKickoff = kickoff !== null && Number.isFinite(kickoff.getTime());
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 py-1.5">
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium truncate">{p.home_team} <span className="text-muted-foreground">vs</span> {p.away_team}</div>
+        <div className="text-xs text-muted-foreground flex items-center gap-1 py-0.5">
+          <Clock className="h-3 w-3 shrink-0" aria-hidden="true" />
+          {validKickoff ? (
+            <time dateTime={kickoff.toISOString()}>
+              Kickoff: {kickoff.toLocaleDateString("en-GB", { timeZone: "Africa/Lagos", day: "numeric", month: "short" })} · {kickoff.toLocaleTimeString("en-GB", { timeZone: "Africa/Lagos", hour: "2-digit", minute: "2-digit", hour12: false })} WAT
+            </time>
+          ) : <span>Kickoff time unavailable</span>}
+        </div>
         <div className="text-[11px] text-muted-foreground">
           {TYPE_LABEL[p.prediction_type] ?? p.prediction_type} · {p.selection} · {Number(p.confidence).toFixed(1)}%
         </div>
