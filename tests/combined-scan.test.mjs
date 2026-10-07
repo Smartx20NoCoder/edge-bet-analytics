@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {registerHooks} from 'node:module';
 const modules={
+ '@/lib/analyze-stream.server':new URL('../src/lib/analyze-stream.server.ts',import.meta.url).href,
+ '@/lib/cron-auth.server':`export const isCronAuthorized=()=>false;`,
  '@/lib/admin-auth.server':`export async function requireAdmin(token){if(token!=='test-admin-token-valid')throw new Error('unauthorized')}`,
  '@tanstack/react-router':`export const createFileRoute=()=>x=>x;`,
  '@/integrations/supabase/client.server':`export const supabaseAdmin={};`,
@@ -10,7 +12,7 @@ const modules={
  '@/lib/predictions.functions':`export async function lockDailyBestPickIfNeeded(){globalThis.scanOrder.push('select')}`,
  '@/lib/oddsapi.server':`export async function getOddsApiKeysStatus(){return {availableKeys:1}};export async function runDualFreeScan(opts){globalThis.scanOrder.push('odds');if(globalThis.failOdds)throw new Error('fixture source unavailable');opts.onEvent('done',{matchesAnalyzed:5,predictionsGenerated:2});return {matchesAnalyzed:5,predictionsGenerated:2}}`,
 };
-registerHooks({resolve(s,c,next){if(modules[s])return {url:'data:text/javascript,'+encodeURIComponent(modules[s]),shortCircuit:true};return next(s,c)}});
+registerHooks({resolve(s,c,next){if(modules[s])return {url:modules[s].startsWith('file:')?modules[s]:'data:text/javascript,'+encodeURIComponent(modules[s]),shortCircuit:true};return next(s,c)}});
 const {Route}=await import('../src/routes/api/analyze-stream.ts');
 globalThis.scanOrder=[];
 const denied=await Route.server.handlers.GET({request:new Request('https://example.test/api/analyze-stream')});

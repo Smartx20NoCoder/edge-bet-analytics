@@ -70,7 +70,7 @@ export function ResultsAutomationCard() {
 
       <div className="rounded-lg border border-border/60 p-3 text-xs text-muted-foreground space-y-1">
         <p><span className="font-semibold text-foreground">Current:</span> {enabled ? "Daily (24 hours)" : "Off"}</p>
-        <p><span className="font-semibold text-foreground">Schedule:</span> Vercel triggers the results update once per day.</p>
+        <p><span className="font-semibold text-foreground">Schedule:</span> 1:15 a.m. WAT daily (00:15 UTC). Free-plan runs can start later within the hour.</p>
         <p><span className="font-semibold text-foreground">Manual backup:</span> the existing Update Results action remains available at any time.</p>
         {q.data?.lastRun && <p><span className="font-semibold text-foreground">Last automated run:</span> {new Date(q.data.lastRun).toLocaleString()}</p>}
       </div>

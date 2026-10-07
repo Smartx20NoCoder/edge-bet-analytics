@@ -1,3 +1,4 @@
+import { getScanAutomation, setScanAutomation } from "@/lib/scan-automation.functions";
 import { adminAccessToken } from "@/lib/admin-session";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -63,6 +64,32 @@ export function RunAnalysisBar() {
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const qc = useQueryClient();
+  const getAuto = useServerFn(getScanAutomation);
+  const setAuto = useServerFn(setScanAutomation);
+  const loadedAuto = useRef(false);
+  const [autoEnabled, setAutoEnabled] = useState(true);
+  const [savingAuto, setSavingAuto] = useState(false);
+  const autoQ = useQuery({ queryKey: ["scan-automation"], queryFn: async () => getAuto({data:{accessToken:await adminAccessToken()}}) });
+  useEffect(() => {
+    if (!autoQ.data || loadedAuto.current) return;
+    loadedAuto.current = true;
+    const c = autoQ.data.config;
+    setAutoEnabled(autoQ.data.enabled);
+    setTimeframeHours(c.timeframeHours); setMaxMatches(c.maxMatches);
+    setMinOdds(c.minOdds); setMaxOdds(c.maxOdds); setTrustedOnly(c.trustedOnly);
+    setBetType(c.betType); setWinRateFloor(c.winRateFloor*100); setDrawRateCeil(c.drawRateCeil*100);
+    setMatchWinnerFloor(c.matchWinnerFloor); setOver25Floor(c.over25Floor);
+  }, [autoQ.data]);
+  async function saveAuto() {
+    setSavingAuto(true);
+    try {
+      await setAuto({data:{accessToken:await adminAccessToken(),enabled:autoEnabled,config:{timeframeHours,maxMatches,minOdds,maxOdds,trustedOnly,betType:betType as "all"|"match_winner"|"over_2_5_goals",winRateFloor:winRateFloor/100,drawRateCeil:drawRateCeil/100,matchWinnerFloor,over25Floor}}});
+      await qc.invalidateQueries({queryKey:["scan-automation"]});
+      toast.success("Daily scan preferences saved");
+    } catch(e:any) { toast.error(e?.message??"Unable to save daily scan preferences"); }
+    finally { setSavingAuto(false); }
+  }
+
 
   const append = (e: LogEntry) => {
     setLog((prev) => [...prev, e]);
@@ -281,6 +308,16 @@ export function RunAnalysisBar() {
          Combined scan runs Goaloo first, then The Odds API, and selects daily picks after both finish. The Odds API pulls leagues configured in Settings → Data Engine and costs API credits per league scanned (Pinnacle-anchored line-shopping, free tier: 500 credits/mo).
        </p>
 
+      <div className="rounded-lg border border-border p-3 space-y-2">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={autoEnabled} onChange={e=>setAutoEnabled(e.target.checked)} disabled={autoQ.isLoading || savingAuto} />Daily automatic scan</label>
+          <Button variant="outline" onClick={saveAuto} disabled={savingAuto || autoQ.isLoading || autoQ.isError}>{savingAuto ? "Saving…" : "Save daily scan settings"}</Button>
+        </div>
+        <p className="text-xs text-muted-foreground">10 a.m. WAT daily (09:00 UTC). On Vercel's free plan, it may start between 10 and 11 a.m. Uses the saved settings above, both sources, and upcoming fixtures through midnight WAT. Manual scans remain available.</p>
+        <p className="text-xs text-muted-foreground">Saved schedule: {autoQ.data?.enabled ? "On" : "Off"}{autoQ.data?.status?.state ? ` · Last run: ${autoQ.data.status.state}` : " · First run pending"}{autoQ.data?.lastRun ? ` · ${new Date(autoQ.data.lastRun).toLocaleString("en-GB",{timeZone:"Africa/Lagos"})} WAT` : ""}</p>
+        {autoQ.data?.status?.error && <p className="text-xs text-destructive">{autoQ.data.status.error}</p>}
+        {autoQ.isError && <p className="text-xs text-destructive">Unable to load daily scan preferences. Try signing in again.</p>}
+      </div>
       <Dialog open={open} onOpenChange={(v) => { if (!running) setOpen(v); }}>
         <DialogContent className="max-w-2xl glass border-neon/20">
           <DialogHeader>
