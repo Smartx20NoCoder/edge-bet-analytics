@@ -26,9 +26,10 @@ export const Route = createFileRoute("/api/cron/auto-scan")({
 
         // Mirror the dashboard's normal scan configuration, with the user's requested
         // unattended default of "all eligible leagues" rather than "major leagues only".
-        // We intentionally omit apiKey so the existing iSports key failover remains active.
+        // Both sources finish before daily selections are finalized.
         const origin = new URL(request.url).origin;
         const params = new URLSearchParams({
+          engine: "combined",
           timeframeHours: "12",
           maxMatches: "80",
           minOdds: "1.5",

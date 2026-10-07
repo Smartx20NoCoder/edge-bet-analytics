@@ -444,6 +444,9 @@ export async function runDualFreeScan(opts: {
   minOdds?: number;
   maxOdds?: number;
   sportKeys?: string[];
+  date?: string;
+  betType?: string;
+  deferDailySelection?: boolean;
   onEvent?: (evt: string, payload: any) => void;
 }): Promise<{ analysisId: string | null; matchesAnalyzed: number; predictionsGenerated: number }> {
   const sportKeys = opts.sportKeys ?? (await getSportKeys());
@@ -454,9 +457,11 @@ export async function runDualFreeScan(opts: {
 
   const fixtures = await fetchOddsApiFixtures(sportKeys, send);
   const now = Date.now();
-  const windowEnd = now + opts.timeframeHours * 3600 * 1000;
+  const selectedStart = opts.date ? new Date(`${opts.date}T00:00:00Z`).getTime() : now;
+  const windowStart = Math.max(now, selectedStart);
+  const windowEnd = windowStart + opts.timeframeHours * 3600 * 1000;
   const candidates = fixtures
-    .filter((f) => f.matchTime * 1000 > now && f.matchTime * 1000 <= windowEnd)
+    .filter((f) => f.matchTime * 1000 > windowStart && f.matchTime * 1000 <= windowEnd)
     .sort((a, b) => a.matchTime - b.matchTime)
     .slice(0, opts.maxMatches);
 
@@ -486,7 +491,8 @@ export async function runDualFreeScan(opts: {
     try {
       const preds = predictFromSharpFairValue(m.raw, m.homeName, m.awayName, {
         matchWinnerFloor: opts.matchWinnerFloor,
-      }).filter((p) => p.market_odds >= minOdds && p.market_odds <= maxOdds);
+      }).filter((p) => p.market_odds >= minOdds && p.market_odds <= maxOdds)
+        .filter((p) => !opts.betType || opts.betType === "all" || p.prediction_type === opts.betType);
       for (const p of preds) {
         allPreds.push({
           engine: "match",
@@ -535,10 +541,11 @@ export async function runDualFreeScan(opts: {
     .single();
   if (aErr || !analysisRow) throw new Error(aErr?.message ?? "analysis insert failed");
 
-  await supabaseAdmin.from("predictions").insert(allPreds.map((p) => ({ ...p, analysis_id: analysisRow.id })));
+  const { error: predictionError } = await supabaseAdmin.from("predictions").insert(allPreds.map((p) => ({ ...p, analysis_id: analysisRow.id })));
+  if (predictionError) throw new Error(`Odds API predictions could not be saved: ${predictionError.message}`);
 
   const { lockDailyBestPickIfNeeded } = await import("./predictions.functions");
-  await lockDailyBestPickIfNeeded();
+  if (!opts.deferDailySelection) await lockDailyBestPickIfNeeded();
 
   send("done", { analysisId: analysisRow.id, matchesAnalyzed: finalCandidates.length, predictionsGenerated: allPreds.length });
   return { analysisId: analysisRow.id, matchesAnalyzed: finalCandidates.length, predictionsGenerated: allPreds.length };

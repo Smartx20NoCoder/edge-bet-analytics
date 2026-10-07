@@ -1,3 +1,4 @@
+import { selectDailyPair, canRefreshDailyPair } from "./daily-pick-selection";
 import { matchSavedResult } from "./goaloo-analysis";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -689,7 +690,7 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
       if (!r || (r.homeScore == null && r.awayScore == null)) { stillPending++; continue; }
       const correct = gradePrediction(p.prediction_type, p.selection, r);
       const totalC = (r.homeCorners ?? 0) + (r.awayCorners ?? 0);
-      await supabaseAdmin
+      const { error: updateError } = await supabaseAdmin
         .from("predictions")
         .update({
           home_score: r.homeScore,
@@ -700,6 +701,7 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
           results_updated_at: new Date().toISOString(),
         })
         .eq("id", p.id);
+      if (updateError) { failedDates++; stillPending++; continue; }
       updated++;
     }
   }
@@ -726,7 +728,7 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
       const r = map.get(String(p.match_id));
       if (!r || (r.homeScore == null && r.awayScore == null)) { stillPending++; continue; }
       const correct = gradePrediction(p.prediction_type, p.selection, r);
-      await supabaseAdmin
+      const { error: updateError } = await supabaseAdmin
         .from("predictions")
         .update({
           home_score: r.homeScore,
@@ -737,6 +739,7 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
           results_updated_at: new Date().toISOString(),
         })
         .eq("id", p.id);
+      if (updateError) { failedDates++; stillPending++; continue; }
       updated++;
     }
   }
@@ -755,16 +758,19 @@ const DAILY_PICK_TYPES = ["match_winner", "over_2_5_goals", "match_winner_hedged
 export async function lockDailyBestPickIfNeeded(): Promise<void> {
   const lookbackStart = new Date(Date.now() - 45 * 24 * 3600 * 1000).toISOString();
 
-  const { data: candidatePicks, error } = await supabaseAdmin
-    .from("predictions")
-    .select("id, match_id, expected_value, kickoff")
-    .in("prediction_type", DAILY_PICK_TYPES)
-    .not("market_odds", "is", null)
-    .not("kickoff", "is", null)
-    .gte("expected_value", 0)
-    .lte("expected_value", DAILY_PICK_EV_CEILING)
-    .gte("kickoff", lookbackStart);
-  if (error) { console.warn(`[lockDailyBestPickIfNeeded] query failed: ${error.message}`); return; }
+  const candidatePicks: any[] = [];
+  // Supabase's default row cap must not give older scans priority over newer sources.
+  for (let offset = 0; ; offset += 1000) {
+    const { data: page, error } = await supabaseAdmin.from("predictions")
+      .select("id, match_id, home_team, away_team, expected_value, kickoff, is_correct")
+      .in("prediction_type", DAILY_PICK_TYPES)
+      .not("market_odds", "is", null).not("kickoff", "is", null)
+      .gte("expected_value", 0).lte("expected_value", DAILY_PICK_EV_CEILING)
+      .gte("kickoff", lookbackStart).order("id").range(offset, offset + 999);
+    if (error) throw new Error(`Daily picks query failed: ${error.message}`);
+    candidatePicks.push(...(page ?? []));
+    if (!page || page.length < 1000) break;
+  }
   if (!candidatePicks || !candidatePicks.length) return;
 
   const byDay = new Map<string, any[]>();
@@ -776,34 +782,28 @@ export async function lockDailyBestPickIfNeeded(): Promise<void> {
   if (!byDay.size) return;
 
   const days = Array.from(byDay.keys());
-  const { data: existingLocks } = await supabaseAdmin
+  const { data: existingLocks, error: locksError } = await supabaseAdmin
     .from("daily_best_picks")
-    .select("day")
+    .select("day, single_prediction_id, combo_prediction_id_1, combo_prediction_id_2, locked_at")
     .in("day", days);
-  const lockedDays = new Set((existingLocks ?? []).map((l: any) => l.day as string));
-
+  if (locksError) throw new Error(`Daily locks could not be read: ${locksError.message}`);
+  const locks = new Map((existingLocks ?? []).map((l: any) => [l.day, l]));
+  const now = Date.now();
   for (const [day, picks] of byDay) {
-    if (lockedDays.has(day)) continue;
-
-    const bestPerMatch = new Map<string, any>();
-    for (const p of picks) {
-      const key = String(p.match_id ?? p.id);
-      const existing = bestPerMatch.get(key);
-      if (!existing || Number(p.expected_value) > Number(existing.expected_value)) bestPerMatch.set(key, p);
-    }
-    const sorted = Array.from(bestPerMatch.values()).sort((a, b) => Number(b.expected_value) - Number(a.expected_value));
-    const single = sorted[0];
+    const locked = locks.get(day) as any;
+    // Keep published outcomes stable once either selected leg has started or settled.
+    if (locked && !canRefreshDailyPair([locked.single_prediction_id, locked.combo_prediction_id_1, locked.combo_prediction_id_2], picks, now)) continue;
+    const pool = locked ? picks.filter(p => Date.parse(p.kickoff) > now && p.is_correct == null) : picks;
+    const { single, second } = selectDailyPair(pool);
     if (!single) continue;
-    const comboLeg2 = sorted[1] ?? null;
-
-    const { error: insertErr } = await supabaseAdmin.from("daily_best_picks").upsert({
-      day,
-      single_prediction_id: single.id,
-      combo_prediction_id_1: single.id,
-      combo_prediction_id_2: comboLeg2 ? comboLeg2.id : null,
-      locked_at: new Date().toISOString(),
-    }, { onConflict: "day", ignoreDuplicates: true });
-    if (insertErr) console.warn(`[lockDailyBestPickIfNeeded] upsert failed for day=${day}: ${insertErr.message}`);
+    const row = {
+      day, single_prediction_id: single.id, combo_prediction_id_1: single.id,
+      combo_prediction_id_2: second?.id ?? null, locked_at: new Date().toISOString(),
+    };
+    const { error: insertErr } = locked
+      ? await supabaseAdmin.from("daily_best_picks").update(row).eq("day", day).eq("locked_at", locked.locked_at)
+      : await supabaseAdmin.from("daily_best_picks").upsert(row, { onConflict: "day", ignoreDuplicates: true });
+    if (insertErr) throw new Error(`Daily picks save failed for ${day}: ${insertErr.message}`);
   }
 }
 

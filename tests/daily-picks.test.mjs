@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {selectDailyPair,canRefreshDailyPair} from '../src/lib/daily-pick-selection.ts';
+const a={id:'a',match_id:'goaloo:1',home_team:'Home FC',away_team:'Away',kickoff:'2099-01-01T12:00:00Z',expected_value:.1,is_correct:null};
+const b={...a,id:'b',match_id:'odds-api-id',home_team:'Home',expected_value:.2};
+const c={...a,id:'c',match_id:'other',home_team:'Other',expected_value:.15};
+assert.deepEqual(selectDailyPair([a,b,c]),{single:b,second:c});
+assert.deepEqual(selectDailyPair([c,b,a]),{single:b,second:c});
+assert.deepEqual(selectDailyPair([a,{...c,expected_value:.5}]),{single:a,second:null});
+assert.equal(canRefreshDailyPair(['a','c'],[a,c],Date.parse('2099-01-01T11:00Z')),true);
+assert.equal(canRefreshDailyPair(['a','c'],[a,c],Date.parse('2099-01-01T12:01Z')),false);
+assert.equal(canRefreshDailyPair(['a'],[{...a,is_correct:true}],0),false);
+assert.equal(canRefreshDailyPair(['missing'],[a],0),false);
+console.log('Daily picks rank both providers equally, avoid same-fixture doubles, and preserve started/settled locks');

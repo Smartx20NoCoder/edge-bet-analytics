@@ -90,12 +90,12 @@ export const Route = createFileRoute("/api/analyze-stream")({
               controller.enqueue(encoder.encode(JSON.stringify({ event, ...payload }) + "\n"));
             };
 
-            const requestedEngine = url.searchParams.get("engine") ?? "goaloo";
+            const requestedEngine = url.searchParams.get("engine") ?? "combined";
             const isportsAvailable = requestedEngine !== "dual_free";
             let summary={matchesAnalyzed:0,predictionsGenerated:0};
             let oddsApiAvailable = false;
             try {
-              oddsApiAvailable = requestedEngine === "dual_free" && (await getOddsApiKeysStatus()).availableKeys > 0;
+              oddsApiAvailable = requestedEngine !== "goaloo" && (await getOddsApiKeysStatus()).availableKeys > 0;
             } catch (e) {
               console.warn(`[analyze-stream] odds api key status check failed: ${e?.message ?? e}`);
             }
@@ -113,14 +113,15 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 all = await fetchScheduleByDate(date);
               } catch (e) {
                 send("status", { message: `Goaloo schedule fetch failed: ${e?.message ?? e}` });
-                return;
+                throw e;
               }
               send("status", { message: `Goaloo returned ${all.length} total fixtures for ${date}.` });
 
               const now = Date.now();
-              const windowEnd = now + timeframeHours * 3600 * 1000;
+              const windowStart = Math.max(now, Date.parse(`${date}T00:00:00Z`));
+              const windowEnd = windowStart + timeframeHours * 3600 * 1000;
 
-              const futureOnly = all.filter((m) => m.matchTime * 1000 > now);
+              const futureOnly = all.filter((m) => m.matchTime * 1000 > windowStart);
               const inWindow = futureOnly.filter((m) => m.matchTime * 1000 <= windowEnd);
               const afterBlocked = inWindow.filter((m) => !isBlocked(m.leagueName) && !isWomensFixture(m.homeName, m.awayName));
               const afterTrusted = trustedOnly ? afterBlocked.filter((m) => isTrusted(m.leagueName)) : afterBlocked;
@@ -380,6 +381,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 send("status", { message: `${hedgedCount} sub-60%-confidence/sub-10%-EV Match Winner pick(s) hedged to a real +0.5 Asian Handicap line.` });
               }
 
+              summary={matchesAnalyzed:matchesChecked,predictionsGenerated:finalPreds.length};
               if (!finalPreds.length) {
                 send("status", { message: "Goaloo: no predictions generated this scan." });
                 return;
@@ -405,7 +407,7 @@ export const Route = createFileRoute("/api/analyze-stream")({
                 .single();
               if (aErr || !analysisRow) {
                 send("status", { message: `Goaloo: failed to save scan: ${aErr?.message ?? "unknown error"}` });
-                return;
+                throw new Error(aErr?.message ?? "Goaloo scan save failed");
               }
 
               const {error:predictionError}=await supabaseAdmin
@@ -414,7 +416,6 @@ export const Route = createFileRoute("/api/analyze-stream")({
               if(predictionError) throw new Error(`Predictions could not be saved: ${predictionError.message}`);
               summary={matchesAnalyzed:matchesChecked,predictionsGenerated:finalPreds.length};
 
-              await lockDailyBestPickIfNeeded();
 
               send("status", {
                 message: `Goaloo scan complete: ${finalPreds.length} prediction(s) from ${candidates.length} matches.`,
@@ -424,33 +425,43 @@ export const Route = createFileRoute("/api/analyze-stream")({
             }
 
             try {
+              const failures: string[] = [];
               if (isportsAvailable) {
-                send("status", { message: "— Goaloo scan starting —" });
-                await runIsportsScan();
-              } else {
-                send("status", { message: "Goaloo not configured — skipping." });
+                send("status", { message: "— Goaloo statistical scan starting —" });
+                try { await runIsportsScan(); }
+                catch (e) {
+                  failures.push("Goaloo");
+                  send("status", { message: `Goaloo scan failed: ${e?.message ?? e}. Continuing with The Odds API.` });
+                }
               }
-
               if (oddsApiAvailable) {
                 send("status", { message: "— Odds API (sharp-vs-soft) scan starting —" });
                 try {
-                  await runDualFreeScan({
-                    timeframeHours,
-                    maxMatches,
-                    matchWinnerFloor,
-                    over25Floor,
-                    minOdds,
-                    maxOdds,
-                    onEvent: send,
+                  const result = await runDualFreeScan({
+                    timeframeHours, maxMatches, matchWinnerFloor, over25Floor,
+                    minOdds, maxOdds, date, betType, deferDailySelection: true,
+                    onEvent: (event, payload) => {
+                      if (event === "done") return;
+                      if (event === "error") {
+                        send("status", payload);
+                        return;
+                      }
+                      send(event, payload);
+                    },
                   });
+                  summary.matchesAnalyzed += result.matchesAnalyzed;
+                  summary.predictionsGenerated += result.predictionsGenerated;
                 } catch (e) {
-                  send("status", { message: `Odds API scan failed: ${e?.message ?? e} — Goaloo results (if any) are unaffected.` });
+                  failures.push("Odds API");
+                  send("status", { message: `Odds API scan failed: ${e?.message ?? e}. Saved Goaloo results are unaffected.` });
                 }
-              } else {
-                send("status", { message: "Odds API not configured — skipping." });
+              } else if (requestedEngine !== "goaloo") {
+                send("status", { message: "No available Odds API key — Goaloo results are retained; configure the Odds API keys in Settings." });
+                failures.push("Odds API unavailable");
               }
-
-              if(isportsAvailable) send("done", { message: "Scan complete.", ...summary });
+              send("status", { message: "Both source phases finished. Selecting Single and Combo of the Day from the shared qualifying pool…" });
+              await lockDailyBestPickIfNeeded();
+              send("done", { message: failures.length ? "Scan finished with source warnings." : "Scan complete.", ...summary, failures });
             } catch (e) {
               send("error", { message: e?.message ?? "scan failed" });
             } finally {

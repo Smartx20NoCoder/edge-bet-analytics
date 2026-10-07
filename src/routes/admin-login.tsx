@@ -21,17 +21,69 @@ function AdminLogin() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [providerChecked, setProviderChecked] = useState(false);
+  const [code, setCode] = useState("");
 
   useEffect(() => {
-    supabase.auth.getUser().then(async ({ data }) => {
-      if (data.user) {
-        const role = (data.user.app_metadata as Record<string, unknown> | null)?.role;
-        if (role === "admin") await navigate({ to: "/settings" });
+    let active = true;
+    async function checkAccess() {
+      const { data } = await supabase.auth.getUser();
+      if (!active || !data.user) return;
+      if (data.user.app_metadata?.role === "admin") await navigate({ to: "/settings" });
+      else {
+        await supabase.auth.signOut();
+        if (active) setError("This account is not authorized for administrator access.");
       }
-    }).catch(() => {
-      // A failed session check should not prevent the login form from being used.
+    }
+    checkAccess().catch(() => {});
+    const { data: subscription } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN") queueMicrotask(() => { checkAccess().catch(() => {}); });
     });
+    fetch('https://retwtdomgshqqdtqogei.supabase.co/auth/v1/settings', {
+      headers: { apikey: 'sb_publishable_EgbvacsOIWAv7OLKRbsWMA_HZjulUKG' },
+    }).then(r => r.ok ? r.json() : Promise.reject()).then(settings => {
+      if (active) setGoogleEnabled(settings.external?.google === true);
+    }).catch(() => {}).finally(() => { if (active) setProviderChecked(true); });
+    return () => { active = false; subscription.subscription.unsubscribe(); };
   }, [navigate]);
+
+  async function emailLink() {
+    if (!email.trim()) { setError("Enter your administrator email first."); return; }
+    setLoading(true); setError(null); setNotice(null);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: { shouldCreateUser: false, emailRedirectTo: `${window.location.origin}/admin-login` },
+      });
+      if (error) throw error;
+      setNotice("Check your email for the sign-in link. If your email contains a code, enter it below. Only an existing administrator account has settings access.");
+    } catch (err) { setError(err instanceof Error ? err.message : "Unable to send sign-in email."); }
+    finally { setLoading(false); }
+  }
+
+  async function verifyCode() {
+    setLoading(true); setError(null);
+    try {
+      const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token: code.trim(), type: "email" });
+      if (error) throw error;
+    } catch (err) { setError(err instanceof Error ? err.message : "Unable to verify sign-in code."); }
+    finally { setLoading(false); }
+  }
+
+  async function googleSignIn() {
+    setLoading(true); setError(null);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google", options: { redirectTo: `${window.location.origin}/admin-login` },
+      });
+      if (error) throw error;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to connect to Google sign-in.");
+      setLoading(false);
+    }
+  }
 
   async function signIn(e: React.FormEvent) {
     e.preventDefault();
@@ -85,23 +137,34 @@ function AdminLogin() {
 
         <div className="flex items-start gap-2 text-xs text-muted-foreground rounded-lg border border-border/60 p-3">
           <ShieldCheck className="h-4 w-4 text-neon shrink-0 mt-0.5" />
-          <span>Only a Edge Bet admin can access or change settings.</span>
+          <span>Only an Edge Bet admin can access or change settings.</span>
         </div>
 
         <form onSubmit={signIn} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-xs font-medium">Email</label>
-            <Input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <label htmlFor="admin-email" className="text-xs font-medium">Email</label>
+            <Input id="admin-email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-medium">Password</label>
-            <Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <label htmlFor="admin-password" className="text-xs font-medium">Password</label>
+            <Input id="admin-password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           </div>
-          {error && <p className="text-xs text-destructive">{error}</p>}
+
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? "Signing in…" : "Sign in"}
           </Button>
         </form>
+        <div className="space-y-3 border-t border-border/60 pt-4">
+          <Button type="button" variant="outline" className="w-full" disabled={loading} onClick={emailLink}>Email me a sign-in link</Button>
+          {notice && <p role="status" className="text-xs text-muted-foreground">{notice}</p>}
+          {notice && <div className="flex gap-2">
+            <Input aria-label="Email sign-in code" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={e => setCode(e.target.value)} placeholder="Code, if included in email" />
+            <Button type="button" disabled={loading || !code.trim()} onClick={verifyCode}>Verify</Button>
+          </div>}
+          <Button type="button" variant="outline" className="w-full" disabled={loading || !googleEnabled} onClick={googleSignIn}>Continue with Google</Button>
+          {providerChecked && !googleEnabled && <p className="text-xs text-muted-foreground">Google sign-in needs to be enabled for this app. Use email and password or an email sign-in link for now.</p>}
+        </div>
+        {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
       </div>
     </section>
   );
