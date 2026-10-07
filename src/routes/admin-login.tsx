@@ -25,12 +25,17 @@ function AdminLogin() {
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [providerChecked, setProviderChecked] = useState(false);
   const [code, setCode] = useState("");
+  const [recovering, setRecovering] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   useEffect(() => {
     let active = true;
+    let recoveryFlow = window.location.hash.includes("type=recovery");
+    if (recoveryFlow) setRecovering(true);
     async function checkAccess() {
       const { data } = await supabase.auth.getUser();
-      if (!active || !data.user) return;
+      if (!active || !data.user || recoveryFlow) return;
       if (data.user.app_metadata?.role === "admin") await navigate({ to: "/settings" });
       else {
         await supabase.auth.signOut();
@@ -39,6 +44,12 @@ function AdminLogin() {
     }
     checkAccess().catch(() => {});
     const { data: subscription } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        recoveryFlow = true;
+        setRecovering(true);
+        setNotice("Choose a new password for your administrator account.");
+        return;
+      }
       if (event === "SIGNED_IN") queueMicrotask(() => { checkAccess().catch(() => {}); });
     });
     fetch('https://retwtdomgshqqdtqogei.supabase.co/auth/v1/settings', {
@@ -55,11 +66,44 @@ function AdminLogin() {
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
-        options: { shouldCreateUser: false, emailRedirectTo: `${window.location.origin}/admin-login` },
+        options: { shouldCreateUser: false, emailRedirectTo: "https://edge-bet-analytics.vercel.app/admin-login" },
       });
       if (error) throw error;
       setNotice("Check your email for the sign-in link. If your email contains a code, enter it below. Only an existing administrator account has settings access.");
-    } catch (err) { setError(err instanceof Error ? err.message : "Unable to send sign-in email."); }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to send sign-in email.";
+      setError(message.toLowerCase().includes("signup") ? "Email-link login is for the existing administrator account. Check that you entered its registered email address." : message);
+    }
+    finally { setLoading(false); }
+  }
+
+  async function forgotPassword() {
+    if (!email.trim()) { setError("Enter your registered administrator email first."); return; }
+    setLoading(true); setError(null); setNotice(null);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: "https://edge-bet-analytics.vercel.app/admin-login",
+      });
+      if (error) throw error;
+      setNotice("If this is your registered account, check your inbox and spam folder for a password-reset email. Open its link and choose a new password in the app.");
+    } catch (err) { setError(err instanceof Error ? err.message : "Unable to request password recovery."); }
+    finally { setLoading(false); }
+  }
+
+  async function saveRecoveredPassword(e: React.FormEvent) {
+    e.preventDefault(); setError(null);
+    if (newPassword !== confirmPassword) { setError("The passwords do not match."); return; }
+    setLoading(true);
+    try {
+      const { data, error: userError } = await supabase.auth.getUser();
+      if (userError || data.user?.app_metadata?.role !== "admin") throw new Error("Open a valid password-reset link for the administrator account first.");
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      setNewPassword(""); setConfirmPassword(""); setRecovering(false);
+      // Remove the spent recovery fragment before entering settings.
+      window.history.replaceState(null, "", window.location.pathname);
+      await navigate({ to: "/settings" });
+    } catch (err) { setError(err instanceof Error ? err.message : "Unable to update your password."); }
     finally { setLoading(false); }
   }
 
@@ -97,7 +141,7 @@ function AdminLogin() {
       });
 
       if (authError || !data.session || !data.user) {
-        setError(authError?.message ?? "Unable to sign in");
+        setError(authError?.code === "invalid_credentials" ? "Email or password did not match. Use the registered administrator email, or choose Forgot password below." : authError?.message ?? "Unable to sign in");
         setLoading(false);
         return;
       }
@@ -140,6 +184,14 @@ function AdminLogin() {
           <span>Only an Edge Bet admin can access or change settings.</span>
         </div>
 
+        {recovering ? <form onSubmit={saveRecoveredPassword} className="space-y-4">
+          <p className="text-sm text-muted-foreground">Set your new administrator password.</p>
+          <label htmlFor="new-password" className="text-xs font-medium">New password</label>
+          <Input id="new-password" type="password" autoComplete="new-password" minLength={8} required value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+          <label htmlFor="confirm-password" className="text-xs font-medium">Confirm new password</label>
+          <Input id="confirm-password" type="password" autoComplete="new-password" minLength={8} required value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />
+          <Button type="submit" className="w-full" disabled={loading}>{loading ? "Saving…" : "Save new password"}</Button>
+        </form> : <>
         <form onSubmit={signIn} className="space-y-4">
           <div className="space-y-1.5">
             <label htmlFor="admin-email" className="text-xs font-medium">Email</label>
@@ -155,6 +207,7 @@ function AdminLogin() {
           </Button>
         </form>
         <div className="space-y-3 border-t border-border/60 pt-4">
+          <Button type="button" variant="outline" className="w-full" disabled={loading} onClick={forgotPassword}>Forgot password?</Button>
           <Button type="button" variant="outline" className="w-full" disabled={loading} onClick={emailLink}>Email me a sign-in link</Button>
           {notice && <p role="status" className="text-xs text-muted-foreground">{notice}</p>}
           {notice && <div className="flex gap-2">
@@ -164,6 +217,7 @@ function AdminLogin() {
           <Button type="button" variant="outline" className="w-full" disabled={loading || !googleEnabled} onClick={googleSignIn}>Continue with Google</Button>
           {providerChecked && !googleEnabled && <p className="text-xs text-muted-foreground">Google sign-in needs to be enabled for this app. Use email and password or an email sign-in link for now.</p>}
         </div>
+        </>}
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
       </div>
     </section>
