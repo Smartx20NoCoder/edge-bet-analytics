@@ -64,10 +64,10 @@ export function PredictionCard({ p }: { p: Prediction }) {
   const marketOdds = p.market_odds != null ? Number(p.market_odds) : null;
   return (
     <div className="glass rounded-xl p-5 flex flex-col gap-4 hover:translate-y-[-2px] transition-transform">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-widest text-muted-foreground">{p.league_name ?? "League"}</div>
-          <div className="font-semibold text-base truncate">
+      <div className="flex flex-col gap-3">
+        <div className="min-w-0 w-full">
+          <div className="text-xs leading-5 text-muted-foreground whitespace-normal [overflow-wrap:anywhere]">{p.league_name ?? "League"}</div>
+          <div className="font-semibold text-base leading-6 whitespace-normal [overflow-wrap:anywhere]">
             {p.home_team} <span className="text-muted-foreground">vs</span> {p.away_team}
           </div>
           {ko && (
@@ -77,7 +77,7 @@ export function PredictionCard({ p }: { p: Prediction }) {
             </div>
           )}
         </div>
-        <div className="flex flex-col items-end gap-1.5 shrink-0">
+        <div className="flex w-full flex-wrap items-center gap-1.5">
           <Badge variant="outline" className="border-border bg-accent/40 text-[10px] uppercase tracking-wider">
             {TYPE_LABEL[p.prediction_type] ?? p.prediction_type}
           </Badge>
