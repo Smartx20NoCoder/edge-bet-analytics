@@ -16,10 +16,3 @@ export function selectDailyPair(picks: DailyCandidate[]) {
   const ranked = [...best.values()].sort((a,b) => Number(b.expected_value)-Number(a.expected_value) || a.id.localeCompare(b.id));
   return { single: ranked[0] ?? null, second: ranked[1] ?? null };
 }
-export function canRefreshDailyPair(lockedIds: Array<string | null>, picks: DailyCandidate[], now: number): boolean {
-  const ids = lockedIds.filter((id): id is string => !!id);
-  return ids.length > 0 && ids.every(id => {
-    const pick = picks.find(p => p.id === id);
-    return !!pick && pick.is_correct == null && Date.parse(pick.kickoff) > now;
-  });
-}

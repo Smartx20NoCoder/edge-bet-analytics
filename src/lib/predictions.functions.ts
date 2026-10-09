@@ -1,5 +1,5 @@
 import {isVoidStatus,settleSlip} from './slip-settlement';
-import { selectDailyPair, canRefreshDailyPair } from "./daily-pick-selection";
+import { selectDailyPair } from "./daily-pick-selection";
 import { matchSavedResult } from "./goaloo-analysis";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -809,21 +809,17 @@ export async function lockDailyBestPickIfNeeded(): Promise<void> {
     .in("day", days);
   if (locksError) throw new Error(`Daily locks could not be read: ${locksError.message}`);
   const locks = new Map((existingLocks ?? []).map((l: any) => [l.day, l]));
-  const now = Date.now();
   for (const [day, picks] of byDay) {
     const locked = locks.get(day) as any;
-    // Keep published outcomes stable once either selected leg has started or settled.
-    if (locked && !canRefreshDailyPair([locked.single_prediction_id, locked.combo_prediction_id_1, locked.combo_prediction_id_2], picks, now)) continue;
-    const pool = locked ? picks.filter(p => Date.parse(p.kickoff) > now && p.is_correct == null) : picks;
-    const { single, second } = selectDailyPair(pool);
+    // The first saved daily selection is final, including before kickoff.
+    if (locked) continue;
+    const { single, second } = selectDailyPair(picks);
     if (!single) continue;
     const row = {
       day, single_prediction_id: single.id, combo_prediction_id_1: single.id,
       combo_prediction_id_2: second?.id ?? null, locked_at: new Date().toISOString(),
     };
-    const { error: insertErr } = locked
-      ? await supabaseAdmin.from("daily_best_picks").update(row).eq("day", day).eq("locked_at", locked.locked_at)
-      : await supabaseAdmin.from("daily_best_picks").upsert(row, { onConflict: "day", ignoreDuplicates: true });
+    const { error: insertErr } = await supabaseAdmin.from("daily_best_picks").upsert(row, { onConflict: "day", ignoreDuplicates: true });
     if (insertErr) throw new Error(`Daily picks save failed for ${day}: ${insertErr.message}`);
   }
 }
