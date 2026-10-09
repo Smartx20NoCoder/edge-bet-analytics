@@ -907,6 +907,19 @@ export const getDailyPicks = createServerFn({ method: "POST" })
     return { days: results, totalDays: totalCount, page, pageSize, totalPages: Math.max(1, Math.ceil(totalCount / pageSize)) };
   });
 
-export const markPredictionAwarded=createServerFn({method:'POST'})
- .inputValidator((d:unknown)=>z.object({predictionId:z.string().uuid(),accessToken:z.string().min(20)}).parse(d))
- .handler(async({data})=>{await requireAdmin(data.accessToken);const {data:row,error}=await supabaseAdmin.from('predictions').select('match_id,kickoff').eq('id',data.predictionId).single();if(error||!row||!row.match_id)throw new Error('Saved prediction not found.');if(!row.kickoff||Date.parse(row.kickoff)>Date.now())throw new Error('Use this only after kickoff, once the award is confirmed.');const {error:saveError}=await supabaseAdmin.from('predictions').update({ft_status:'AWARDED',is_correct:null,total_corners:null,results_updated_at:new Date().toISOString()}).eq('match_id',row.match_id);if(saveError)throw new Error(saveError.message);return {ok:true};});
+export const markPredictionAwarded = createServerFn({method:"POST"})
+ .inputValidator(z.object({predictionId:z.string().uuid(),accessToken:z.string().min(20)}))
+ .handler(async({data})=>{
+  await requireAdmin(data.accessToken);
+  const {data:row,error}=await supabaseAdmin.from('predictions').select('id,match_id,kickoff,home_team,away_team').eq('id',data.predictionId).single();
+  if(error||!row||!row.match_id)throw new Error('Saved prediction not found.');
+  if(!row.kickoff||!Number.isFinite(Date.parse(row.kickoff))||Date.parse(row.kickoff)>Date.now())throw new Error('Use this only after kickoff, once the award is confirmed.');
+  // An admin-confirmed award applies to the fixture, including selections from
+  // the other engine when both teams and kickoff identify the same game.
+  const {data:siblings,error:readError}=await supabaseAdmin.from('predictions').select('id,match_id,kickoff,home_team,away_team').eq('kickoff',row.kickoff);
+  if(readError)throw new Error(readError.message);
+  const fixture={matchId:row.match_id,homeName:row.home_team,awayName:row.away_team,kickoff:row.kickoff};
+  const ids=[...new Set([data.predictionId,...(siblings??[]).filter(p=>p.match_id===row.match_id||(row.home_team&&row.away_team&&matchSavedResult(p,[fixture]))).map(p=>p.id)])];
+  const {error:saveError}=await supabaseAdmin.from('predictions').update({ft_status:'AWARDED',is_correct:null,total_corners:null,results_updated_at:new Date().toISOString()}).in('id',ids);
+  if(saveError)throw new Error(saveError.message);return {ok:true};
+ });
