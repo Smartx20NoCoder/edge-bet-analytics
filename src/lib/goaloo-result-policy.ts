@@ -15,7 +15,10 @@ function element(html:string,id:string){
  while((m=tokens.exec(html))){depth+=m[1]?-1:1;if(depth===0)return html.slice(start,m.index);if(m.index-start>12000)return '';}
  return '';
 }
-export function verifiedGoalooStatus(html:string,expectedId:string){
+export function goalooVoidStatus(state:number):string|null {
+ return state===-12?'ABANDONED':state===-14?'POSTPONED':null;
+}
+export function verifiedGoalooStatus(html:string,expectedId:string):{state:number;awarded?:boolean;voided?:boolean;status?:string;label?:string;reason?:string}{
  const id=html.match(/var\s+scheduleId\s*=\s*(\d+)/)?.[1],state=Number(html.match(/\bstate:\s*parseInt\('(-?\d+)'\)/)?.[1]??NaN);
  if(id!==expectedId||!Number.isFinite(state))throw new Error('Goaloo match status could not be verified.');
  // These are match-header/result-note containers, never the event timeline,
@@ -23,5 +26,9 @@ export function verifiedGoalooStatus(html:string,expectedId:string){
  for(const id of ['mScore','explain','matchRemark','matchNote','matchExplain','match-note','match-remark','result-note']){
   const reason=awardedMatchNotice(element(html,id));if(reason)return {state,awarded:true as const,label:'Awarded result',reason};
  }
+ const header=element(html,'mScore').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ');
+ const explicit=header.match(/\b(cancelled|canceled|abandoned|postponed)\b/i)?.[1]?.toUpperCase();
+ const status=explicit??goalooVoidStatus(state);
+ if(status)return {state,voided:true,status,label:status};
  return {state};
 }

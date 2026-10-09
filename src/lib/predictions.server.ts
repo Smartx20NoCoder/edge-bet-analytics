@@ -1,3 +1,4 @@
+import {isVoidStatus} from './slip-settlement';
 // Statistical prediction engines. Server-only.
 // Parses the actual iSportsAPI /analysis response shape:
 //   { code, data: { homeLastMatches, awayLastMatches, headToHead,
@@ -467,7 +468,7 @@ export function gradePrediction(
   selection: string,
   r: { homeScore: number | null; awayScore: number | null; homeCorners: number | null; awayCorners: number | null; status?:string|null },
 ): boolean | null {
-  if(r.status==='AWARDED')return null;
+  if(isVoidStatus(r.status))return null;
   const hs = r.homeScore, as = r.awayScore;
   const corners = (r.homeCorners ?? 0) + (r.awayCorners ?? 0);
   const cornersOk = r.homeCorners != null && r.awayCorners != null;

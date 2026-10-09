@@ -1,3 +1,4 @@
+import {isVoidStatus,settleSlip} from '@/lib/slip-settlement';
 import { adminAccessToken } from "@/lib/admin-session";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
@@ -15,8 +16,10 @@ const TYPE_LABEL: Record<string, string> = {
 
 function PickRow({ p, compact }: { p: any; compact?: boolean }) {
   const ev = p.expected_value != null ? Number(p.expected_value) : null;
-  const awarded=p.ft_status==='AWARDED';
-  const graded = !awarded&&p.is_correct !== null && p.is_correct !== undefined;
+  const voided=isVoidStatus(p.ft_status);
+  const result=settleSlip([p]);
+  const graded = result.status==='won'||result.status==='lost';
+  const hasScore=Number.isInteger(p.home_score)&&Number.isInteger(p.away_score);
   const kickoff = p.kickoff ? new Date(p.kickoff) : null;
   const validKickoff = kickoff !== null && Number.isFinite(kickoff.getTime());
   return (
@@ -36,6 +39,7 @@ function PickRow({ p, compact }: { p: any; compact?: boolean }) {
           {TYPE_LABEL[p.prediction_type] ?? p.prediction_type} · {p.selection} · {Number(p.confidence).toFixed(1)}%
         </div>
       </div>
+      {hasScore && <div className="text-xs font-semibold">{voided ? (p.ft_status==='AWARDED'?'Awarded score':'Recorded score') : 'FT'} {p.home_score}–{p.away_score}</div>}
       <div className="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <div className={cn("font-mono text-sm font-semibold", ev != null && ev >= 0 ? "text-neon" : "text-destructive")}>
           {ev != null ? `${ev >= 0 ? "+" : ""}${(ev * 100).toFixed(1)}%` : "—"} @ {Number(p.market_odds).toFixed(2)}
@@ -43,10 +47,10 @@ function PickRow({ p, compact }: { p: any; compact?: boolean }) {
         {graded && (
           <div className={cn("text-[11px] inline-flex items-center gap-1", p.is_correct ? "text-neon" : "text-destructive")}>
             {p.is_correct ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-            {p.is_correct ? "Won" : "Lost"}
+            {p.is_correct ? `Won${result.profit!==null?` · +${result.profit.toFixed(2)}u`:""}` : "Lost · −1.00u"}
           </div>
         )}
-        {awarded&&<div className="text-[11px] text-muted-foreground">— Awarded · not graded</div>}{!graded&&!awarded && <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1"><Clock className="h-3 w-3" /> Pending</div>}
+        {voided&&<div className="text-[11px] text-muted-foreground">— Void · {String(p.ft_status).toLowerCase()} · settled at 1.00</div>}{!graded&&!voided && <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1"><Clock className="h-3 w-3" /> Pending</div>}
       </div>
     </div>
   );
@@ -84,15 +88,17 @@ function DayCard({ d }: { d: any }) {
           <div className="space-y-1">
             {d.combo.legs.map((leg: any) => <PickRow key={leg.id} p={leg} compact />)}
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 mt-1 border-t border-border/40">
-              <span className="text-xs text-muted-foreground">Combined odds {d.combo.combinedOdds.toFixed(2)}</span>
-              {d.combo.awardReview?<span className="text-[11px] text-muted-foreground">— Awarded leg · not graded</span>:d.combo.isCorrect === null ? (
+              <span className="text-xs text-muted-foreground">Combined odds {d.combo.combinedOdds===null?'—':d.combo.combinedOdds.toFixed(2)}</span>
+              {d.combo.status === 'pending' ? (
                 <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1"><Clock className="h-3 w-3" /> Pending</span>
               ) : (
-                <span className={cn("text-[11px] font-semibold inline-flex items-center gap-1", d.combo.isCorrect ? "text-neon" : "text-destructive")}>
-                  {d.combo.isCorrect ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                  {d.combo.isCorrect ? `Won — ${d.combo.profit >= 0 ? "+" : ""}${d.combo.profit.toFixed(2)}` : `Lost — ${d.combo.profit.toFixed(2)}`}
+                <span className={cn("text-[11px] font-semibold inline-flex items-center gap-1", d.combo.status==='void' ? "text-muted-foreground" : d.combo.isCorrect ? "text-neon" : "text-destructive")}>
+                  {d.combo.status==='void' ? 'Void — stake returned' : d.combo.isCorrect ? <><CheckCircle2 className="h-3 w-3" />Won</> : <><XCircle className="h-3 w-3" />Lost</>}
+                  {d.combo.profit !== null && ` · ${d.combo.profit >= 0 ? "+" : ""}${d.combo.profit.toFixed(2)}u`}
                 </span>
               )}
+              {d.combo.payout !== null && <span className="text-[11px] text-muted-foreground">Return {d.combo.payout.toFixed(2)}u per 1u stake</span>}
+              {d.combo.voidLegs > 0 && <span className="text-[11px] text-muted-foreground">{d.combo.voidLegs} void leg{d.combo.voidLegs===1?'':'s'} @ 1.00</span>}
             </div>
           </div>
         ) : (

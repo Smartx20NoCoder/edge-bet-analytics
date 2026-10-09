@@ -12,7 +12,7 @@ function formatMonth(key: string) {
   return `${MONTH_NAMES[Number(m) - 1]} ${y}`;
 }
 
-function Row({ label, win, loss, pending, winRate, profitLoss }: { label: string; win: number; loss: number; pending: number; winRate: number | null; profitLoss: number }) {
+function Row({ label, win, loss, pending, voided, winRate, profitLoss }: { label: string; win: number; loss: number; pending: number; voided: number; winRate: number | null; profitLoss: number }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs py-1">
       <span className="text-muted-foreground">{label}</span>
@@ -22,6 +22,7 @@ function Row({ label, win, loss, pending, winRate, profitLoss }: { label: string
         </span>
         <span className="text-neon">{win}W</span>
         <span className="text-destructive">{loss}L</span>
+        {voided > 0 && <span className="text-muted-foreground" title="Voided slips: stake returned">{voided}V</span>}
         {pending > 0 && <span className="text-muted-foreground">{pending}P</span>}
         {winRate != null && (
           <span className={cn("ml-1 px-1.5 rounded", winRate >= 50 ? "text-neon" : "text-destructive")}>
@@ -50,7 +51,7 @@ export function MonthlyPerformancePanel() {
       >
         {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
         <BarChart3 className="h-3.5 w-3.5" />
-        Monthly win/loss (Single & Combo of the Day)
+        Monthly win/loss/void (Single & Combo of the Day)
       </button>
       {open && (
         <div className="mt-2 glass rounded-xl p-4 w-full max-w-md">
@@ -60,11 +61,12 @@ export function MonthlyPerformancePanel() {
             <p className="text-xs text-muted-foreground">No graded picks yet.</p>
           ) : (
             <div className="space-y-3">
+              <p className="text-[10px] text-muted-foreground">W won · L lost · V void · P pending. Returns use a 1u stake; void legs count at 1.00.</p>
               {q.data.months.map((m: any) => (
                 <div key={m.month} className="pb-2 border-b border-border/40 last:border-0 last:pb-0">
                   <div className="text-[11px] font-semibold mb-1">{formatMonth(m.month)}</div>
-                  <Row label="Single" win={m.singleWin} loss={m.singleLoss} pending={m.singlePending} winRate={m.singleWinRate} profitLoss={m.singleProfitLoss ?? 0} />
-                  <Row label="Combo" win={m.comboWin} loss={m.comboLoss} pending={m.comboPending} winRate={m.comboWinRate} profitLoss={m.comboProfitLoss ?? 0} />
+                  <Row label="Single" win={m.singleWin} loss={m.singleLoss} pending={m.singlePending} voided={m.singleVoid ?? 0} winRate={m.singleWinRate} profitLoss={m.singleProfitLoss ?? 0} />
+                  <Row label="Combo" win={m.comboWin} loss={m.comboLoss} pending={m.comboPending} voided={m.comboVoid ?? 0} winRate={m.comboWinRate} profitLoss={m.comboProfitLoss ?? 0} />
                 </div>
               ))}
             </div>

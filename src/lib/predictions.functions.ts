@@ -1,3 +1,4 @@
+import {isVoidStatus,settleSlip} from './slip-settlement';
 import { selectDailyPair, canRefreshDailyPair } from "./daily-pick-selection";
 import { matchSavedResult } from "./goaloo-analysis";
 import { createServerFn } from "@tanstack/react-start";
@@ -561,12 +562,12 @@ export const updateResults = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     if (!preds || !preds.length) return { updated: 0, skipped: 0, noResultFound: 0 };
 
-    const isportsPreds = preds.filter((p) => p.ft_status!=='AWARDED'&& ISPORTS_NUMERIC_RE.test(String(p.match_id)));
-    const oddsApiPreds = preds.filter((p) => p.ft_status!=='AWARDED'&& !ISPORTS_NUMERIC_RE.test(String(p.match_id)));
+    const isportsPreds = preds.filter((p) => !isVoidStatus(p.ft_status)&& ISPORTS_NUMERIC_RE.test(String(p.match_id)));
+    const oddsApiPreds = preds.filter((p) => !isVoidStatus(p.ft_status)&& !ISPORTS_NUMERIC_RE.test(String(p.match_id)));
 
-    const awardedByPrediction=new Map<string,any>();
+    const voidByPrediction=new Map<string,any>();
     const byDate: Record<string, any[]> = {};
-    for (const p of preds.filter(p=>p.ft_status!=='AWARDED')) {
+    for (const p of preds.filter(p=>!isVoidStatus(p.ft_status))) {
       if (!p.kickoff) continue;
       const d = new Date(p.kickoff).toISOString().slice(0, 10);
       (byDate[d] ??= []).push(p);
@@ -588,13 +589,13 @@ export const updateResults = createServerFn({ method: "POST" })
       }
       totalResults += results.length;
       const map = new Map(results.map((r) => [r.matchId, r]));
-      for(const p of group){const r=matchSavedResult(p,results);if(r?.status==='AWARDED')awardedByPrediction.set(p.id,r);}
+      for(const p of group){const r=matchSavedResult(p,results);if(r && isVoidStatus(r.status))voidByPrediction.set(p.id,r);}
       console.log(`[updateResults] date=${date} predictions=${group.length} finishedResults=${results.length}`);
       for (const p of group) {
         if(!ISPORTS_NUMERIC_RE.test(String(p.match_id)))continue;
         const r = matchSavedResult(p, results);
         if (!r) { noResultFound++; continue; }
-        if (r.homeScore == null && r.awayScore == null && r.status!=='AWARDED') { skipped++; continue; }
+        if (r.homeScore == null && r.awayScore == null && !isVoidStatus(r.status)) { skipped++; continue; }
         const correct = gradePrediction(p.prediction_type, p.selection, r);
         const totalC = (r.homeCorners ?? 0) + (r.awayCorners ?? 0);
         await supabaseAdmin
@@ -630,9 +631,9 @@ export const updateResults = createServerFn({ method: "POST" })
       totalResults += results.length;
       const map = new Map(results.map((r) => [r.matchId, r]));
       for (const p of group) {
-        const r = awardedByPrediction.get(p.id)??map.get(String(p.match_id));
+        const r = voidByPrediction.get(p.id)??map.get(String(p.match_id));
         if (!r) { noResultFound++; continue; }
-        if (r.homeScore == null && r.awayScore == null && r.status!=='AWARDED') { skipped++; continue; }
+        if (r.homeScore == null && r.awayScore == null && !isVoidStatus(r.status)) { skipped++; continue; }
         const correct = gradePrediction(p.prediction_type, p.selection, r);
         await supabaseAdmin
           .from("predictions")
@@ -672,12 +673,12 @@ export async function updateAllPendingResultsInternal(apiKey?: 1 | 2) {
   if (error) throw new Error(error.message);
   if (!preds || !preds.length) return { updated: 0, stillPending: 0, dates: 0, totalScanned: 0 };
 
-  const isportsPreds = preds.filter((p) => p.ft_status!=='AWARDED'&& ISPORTS_NUMERIC_RE.test(String(p.match_id)));
-  const oddsApiPreds = preds.filter((p) => p.ft_status!=='AWARDED'&& !ISPORTS_NUMERIC_RE.test(String(p.match_id)));
+  const isportsPreds = preds.filter((p) => !isVoidStatus(p.ft_status)&& ISPORTS_NUMERIC_RE.test(String(p.match_id)));
+  const oddsApiPreds = preds.filter((p) => !isVoidStatus(p.ft_status)&& !ISPORTS_NUMERIC_RE.test(String(p.match_id)));
 
-  const awardedByPrediction=new Map<string,any>();
+  const voidByPrediction=new Map<string,any>();
   const byDate: Record<string, any[]> = {};
-  for (const p of preds.filter(p=>p.ft_status!=='AWARDED')) {
+  for (const p of preds.filter(p=>!isVoidStatus(p.ft_status))) {
     if (!p.kickoff) continue;
     const d = new Date(p.kickoff).toISOString().slice(0, 10);
     (byDate[d] ??= []).push(p);
@@ -698,11 +699,11 @@ export async function updateAllPendingResultsInternal(apiKey?: 1 | 2) {
       continue;
     }
     const map = new Map(results.map((r) => [r.matchId, r]));
-    for(const p of group){const r=matchSavedResult(p,results);if(r?.status==='AWARDED')awardedByPrediction.set(p.id,r);}
+    for(const p of group){const r=matchSavedResult(p,results);if(r && isVoidStatus(r.status))voidByPrediction.set(p.id,r);}
     for (const p of group) {
       if(!ISPORTS_NUMERIC_RE.test(String(p.match_id)))continue;
       const r = matchSavedResult(p, results);
-      if (!r || (r.homeScore == null && r.awayScore == null && r.status!=='AWARDED')) { stillPending++; continue; }
+      if (!r || (r.homeScore == null && r.awayScore == null && !isVoidStatus(r.status))) { stillPending++; continue; }
       const correct = gradePrediction(p.prediction_type, p.selection, r);
       const totalC = (r.homeCorners ?? 0) + (r.awayCorners ?? 0);
       const { error: updateError } = await supabaseAdmin
@@ -739,8 +740,8 @@ export async function updateAllPendingResultsInternal(apiKey?: 1 | 2) {
     }
     const map = new Map(results.map((r) => [r.matchId, r]));
     for (const p of group) {
-      const r = awardedByPrediction.get(p.id)??map.get(String(p.match_id));
-      if (!r || (r.homeScore == null && r.awayScore == null && r.status!=='AWARDED')) { stillPending++; continue; }
+      const r = voidByPrediction.get(p.id)??map.get(String(p.match_id));
+      if (!r || (r.homeScore == null && r.awayScore == null && !isVoidStatus(r.status))) { stillPending++; continue; }
       const correct = gradePrediction(p.prediction_type, p.selection, r);
       const { error: updateError } = await supabaseAdmin
         .from("predictions")
@@ -846,9 +847,10 @@ export const getDailyPicks = createServerFn({ method: "POST" })
       if (l.combo_prediction_id_1) idsNeeded.add(l.combo_prediction_id_1);
       if (l.combo_prediction_id_2) idsNeeded.add(l.combo_prediction_id_2);
     }
-    const { data: predRows } = idsNeeded.size
+    const { data: predRows, error: predError } = idsNeeded.size
       ? await supabaseAdmin.from("predictions").select("*").in("id", Array.from(idsNeeded))
-      : { data: [] as any[] };
+      : { data: [] as any[], error: null };
+    if (predError) throw new Error(predError.message);
     const byId = new Map((predRows ?? []).map((p: any) => [p.id, p]));
 
     const days = (lockRows ?? []).map((l) => l.day as string);
@@ -880,17 +882,7 @@ export const getDailyPicks = createServerFn({ method: "POST" })
       let combo: any = null;
       if (leg1 && leg2) {
         const legs = [leg1, leg2];
-        const awardReview=legs.some(x=>x.ft_status==='AWARDED');
-        const bothGraded = !awardReview&&legs.every((x) => x.is_correct !== null && x.is_correct !== undefined);
-        const won = legs.every((x) => x.is_correct === true);
-        const combinedOdds = legs.reduce((s, x) => s * Number(x.market_odds), 1);
-        combo = {
-          legs,
-          awardReview,
-          combinedOdds: Math.round(combinedOdds * 100) / 100,
-          isCorrect: bothGraded ? won : null,
-          profit: bothGraded ? Math.round((won ? combinedOdds - 1 : -1) * 100) / 100 : null,
-        };
+        combo = {legs, ...settleSlip(legs)};
       }
       const info = infoByDay.get(l.day) ?? { qualifying: 0, excluded: 0 };
       return {

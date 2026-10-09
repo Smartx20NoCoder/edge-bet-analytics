@@ -271,7 +271,7 @@ function HistoryItem({ a, open, onToggle, fp, typeFilter, evFilter }: any) {
   const isAdmin=useAdminAccess();
   const qc=useQueryClient();
   const mark=useServerFn(markPredictionAwarded);
-  const markMut=useMutation({mutationFn:async(predictionId:string)=>mark({data:{predictionId,accessToken:await adminAccessToken()}}),onSuccess:()=>{toast.success('Marked awarded · excluded from played-match grading.');void qc.invalidateQueries();},onError:(e:Error)=>toast.error(e.message)});
+  const markMut=useMutation({mutationFn:async(predictionId:string)=>mark({data:{predictionId,accessToken:await adminAccessToken()}}),onSuccess:()=>{toast.success('Marked awarded · void at 1.00. Affected slips recalculated.');void qc.invalidateQueries();},onError:(e:Error)=>toast.error(e.message)});
   const q = useQuery({
     queryKey: ["preds", "analysis", a.id],
     queryFn: () => fp({ data: { analysisId: a.id } }),

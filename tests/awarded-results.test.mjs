@@ -9,3 +9,8 @@ assert.equal(verifiedGoalooStatus(html('Walkover'),'123').awarded,true);
 assert.equal(verifiedGoalooStatus(html('Finished','<div id="events">Goal awarded; match awarded last season</div><script>var note="Walkover";</script>'),'123').awarded,undefined);
 assert.throws(()=>verifiedGoalooStatus(html('Awarded'),'999'),/verified/);
 console.log('Explicit match awards detected; ordinary scores, VAR events, history and wrong match IDs excluded.');
+
+for(const [state,status] of [[-12,'ABANDONED'],[-14,'POSTPONED']]){const page=html('Not played').replace("parseInt('-1')",`parseInt('${state}')`);assert.equal(verifiedGoalooStatus(page,'123').status,status);}
+assert.equal(verifiedGoalooStatus(html('Cancelled'),'123').status,'CANCELLED');
+assert.equal(verifiedGoalooStatus(html('Interrupted').replace("parseInt('-1')","parseInt('-13')"),'123').voided,undefined);
+console.log('Verified postponed/abandoned/cancelled states are void; temporary interruption is not assumed final.');

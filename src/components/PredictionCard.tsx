@@ -1,3 +1,4 @@
+import {isVoidStatus} from '@/lib/slip-settlement';
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, CheckCircle2, Clock, ShieldAlert, ShieldCheck, TrendingUp, TrendingDown, XCircle } from "lucide-react";
@@ -59,7 +60,7 @@ export function PredictionCard({ p,onMarkAwarded,marking }: { p: Prediction;onMa
   const reasons: string[] = Array.isArray(p.reasons) ? p.reasons : [];
   const ko = p.kickoff ? new Date(p.kickoff) : null;
   const impliedOdds = (100 / conf).toFixed(2);
-  const awarded=p.ft_status==='AWARDED';
+  const voided=isVoidStatus(p.ft_status);
   const hasResult = p.home_score != null && p.away_score != null;
   const ev = p.expected_value != null ? Number(p.expected_value) : null;
   const marketOdds = p.market_odds != null ? Number(p.market_odds) : null;
@@ -135,26 +136,26 @@ export function PredictionCard({ p,onMarkAwarded,marking }: { p: Prediction;onMa
         </ul>
       )}
 
-      {(hasResult||awarded) && (
+      {(hasResult||voided) && (
         <div className={cn(
           "rounded-md border px-3 py-2 flex items-center justify-between text-xs",
-          p.is_correct === true ? "border-neon/40 bg-neon/5 text-neon" :
-          p.is_correct === false ? "border-destructive/40 bg-destructive/5 text-destructive" :
+          !voided&&p.is_correct === true ? "border-neon/40 bg-neon/5 text-neon" :
+          !voided&&p.is_correct === false ? "border-destructive/40 bg-destructive/5 text-destructive" :
           "border-border bg-secondary/40 text-muted-foreground",
         )}>
           <span className="inline-flex items-center gap-1.5 font-semibold">
-            {p.is_correct === true ? <CheckCircle2 className="h-3.5 w-3.5" /> :
-             p.is_correct === false ? <XCircle className="h-3.5 w-3.5" /> : null}
-            {awarded?"Awarded result · not graded":<>FT {p.home_score}–{p.away_score}</>}
+            {!voided&&p.is_correct === true ? <CheckCircle2 className="h-3.5 w-3.5" /> :
+             !voided&&p.is_correct === false ? <XCircle className="h-3.5 w-3.5" /> : null}
+            {voided?`Void · ${String(p.ft_status).toLowerCase()} · odds 1.00`:<>FT {p.home_score}–{p.away_score}</>}
             {p.total_corners != null && <span className="ml-2 text-muted-foreground">· {p.total_corners} corners</span>}
           </span>
           <span className="uppercase tracking-wider text-[10px]">
-            {awarded?"AWARDED":p.is_correct === true ? "WON" : p.is_correct === false ? "LOST" : "PENDING"}
+            {voided?"VOID":p.is_correct === true ? "WON" : p.is_correct === false ? "LOST" : "PENDING"}
           </span>
         </div>
       )}
 
-      {onMarkAwarded&&!awarded&&<button className="text-xs text-muted-foreground underline self-start" disabled={marking} onClick={onMarkAwarded}>Mark awarded · exclude from grading</button>}
+      {onMarkAwarded&&!voided&&<button className="text-xs text-muted-foreground underline self-start" disabled={marking} onClick={onMarkAwarded}>Mark awarded · exclude from grading</button>}
       <div className="flex items-center justify-between pt-2 border-t border-border/60">
         <span className={cn("inline-flex items-center gap-1.5 text-xs font-medium",
           p.risk_level === "low" ? "text-neon" : p.risk_level === "medium" ? "text-gold" : "text-destructive")}>
