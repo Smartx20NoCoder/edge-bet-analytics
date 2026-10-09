@@ -667,7 +667,13 @@ export async function updateAllPendingResultsInternal(apiKey?: 1 | 2, options: {
   if (forced) setForcedKey(forced);
   try {
   let pendingQuery = supabaseAdmin.from("predictions").select("*").is("is_correct", null);
-  if (options.automatic) pendingQuery = pendingQuery.lte("kickoff", new Date(Date.now()-110*60000).toISOString());
+  if (options.automatic) {
+    const now = Date.now();
+    // Automatic checks prioritize recent fixtures; the manual updater keeps the
+    // complete historical backlog available for an explicit retry.
+    pendingQuery = pendingQuery.gte("kickoff", new Date(now-7*24*60*60000).toISOString())
+      .lte("kickoff", new Date(now-110*60000).toISOString());
+  }
   const { data: preds, error } = await pendingQuery;
   if (error) throw new Error(error.message);
   if (!preds || !preds.length) return { updated: 0, stillPending: 0, dates: 0, totalScanned: 0 };

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {registerHooks} from 'node:module';
 const modules={
  '@tanstack/react-start':`export const createServerFn=()=>({inputValidator(){return this},handler(fn){return arg=>fn({data:arg?.data??{}})}});`,
- '@/integrations/supabase/client.server':`export const supabaseAdmin={from(){let id;return {select(){return this},async single(){return {data:globalThis.manualRow,error:null}},is(){return this},eq(_,v){id=v;return this},in(_,v){id=v;return this},update(v){this.row=v;return this},then(resolve){if(this.row){globalThis.writes.push({id,...this.row});resolve({error:globalThis.failWrite?new Error('write failed'):null})}else resolve({data:globalThis.pending,error:null})}}}};`,
+ '@/integrations/supabase/client.server':`export const supabaseAdmin={from(){let id;return {select(){return this},async single(){return {data:globalThis.manualRow,error:null}},is(){return this},gte(_,v){globalThis.resultFrom=v;return this},lte(_,v){globalThis.resultUntil=v;return this},eq(_,v){id=v;return this},in(_,v){id=v;return this},update(v){this.row=v;return this},then(resolve){if(this.row){globalThis.writes.push({id,...this.row});resolve({error:globalThis.failWrite?new Error('write failed'):null})}else resolve({data:globalThis.pending,error:null})}}}};`,
  './goaloo.server.ts':`export const fetchScheduleByDate=()=>[];export const fetchLiveOdds=()=>{};export const fetchMatchAnalysis=()=>{};export const setForcedKey=()=>{};export async function fetchResultsByDate(){globalThis.resultCalls.push('goaloo');if(globalThis.failGoaloo)throw new Error('source unavailable');if(globalThis.award)return [{matchId:'goaloo:123',homeName:'Home',awayName:'Away',kickoff:'2026-10-06T12:00Z',homeScore:globalThis.voidResultStatus?null:3,awayScore:globalThis.voidResultStatus?null:0,status:globalThis.voidResultStatus??'AWARDED',homeCorners:null,awayCorners:null}];return [{matchId:'goaloo:123',homeScore:2,awayScore:1,status:-1,homeCorners:null,awayCorners:null}]}`,
  './oddsapi.server.ts':`export async function fetchOddsApiResults(){globalThis.resultCalls.push('odds');return [{matchId:'abcdef',homeScore:0,awayScore:1,status:-1}]}`,
  './admin-auth.server.ts':`export const requireAdmin=(token)=>{if(token!=='test-admin-token-valid')throw new Error('unauthorized')};`,
@@ -40,3 +40,9 @@ for(const status of ['POSTPONED','CANCELLED','ABANDONED']){
  globalThis.pending=globalThis.pending.map(p=>({...p,ft_status:status}));assert.equal((await updateAllPendingResultsInternal()).stillPending,0);
 }
 console.log('Confirmed unplayed void results settle both sources without scores and stay out of the pending queue.');
+
+Object.assign(globalThis,{pending:[],writes:[],award:false,resultFrom:null,resultUntil:null});
+const before=Date.now();await updateAllPendingResultsInternal(undefined,{automatic:true});const after=Date.now();
+assert.ok(Date.parse(globalThis.resultFrom)>=before-7*86400000&&Date.parse(globalThis.resultFrom)<=after-7*86400000);
+assert.ok(Date.parse(globalThis.resultUntil)>=before-110*60000&&Date.parse(globalThis.resultUntil)<=after-110*60000);
+console.log('Automatic checks bound the recent backlog and wait 110 minutes after kickoff.');

@@ -43,7 +43,7 @@ export function ResultsAutomationCard() {
       <div>
         <h2 className="text-sm uppercase tracking-widest text-muted-foreground">Results Update Automation</h2>
         <p className="mt-2 text-xs text-muted-foreground">
-          Updates existing pending predictions only. It never starts a prediction scan or discovers new matches.
+          Checks pending predictions from the latest seven days, starting 110 minutes after kickoff. Providers must confirm the final result. Use Update Results for older records.
         </p>
       </div>
 

@@ -14,4 +14,4 @@ process.env.RESULTS_SCHEDULE_SECRET='fake-results-test-secret';delete process.en
 const request=(token)=>({request:new Request('https://test/api/cron/update-results',{headers:token?{authorization:'Bearer '+token}:{}})});
 reset();assert.equal((await Route.server.handlers.GET(request())).status,401);assert.equal(globalThis.calls,0);
 assert.equal((await Route.server.handlers.GET(request('fake-results-test-secret'))).status,200);assert.equal(globalThis.calls,1);
-console.log('Automatic result checks: auth, disabled setting, shared lease/throttle, confirmed-result cutoff, success marking and failure recovery passed.');
+console.log('Automatic result checks: auth, disabled setting, shared lease/throttle, success marking and failure recovery passed.');
