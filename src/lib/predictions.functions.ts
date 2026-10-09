@@ -561,11 +561,12 @@ export const updateResults = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     if (!preds || !preds.length) return { updated: 0, skipped: 0, noResultFound: 0 };
 
-    const isportsPreds = preds.filter((p) => ISPORTS_NUMERIC_RE.test(String(p.match_id)));
-    const oddsApiPreds = preds.filter((p) => !ISPORTS_NUMERIC_RE.test(String(p.match_id)));
+    const isportsPreds = preds.filter((p) => p.ft_status!=='AWARDED'&& ISPORTS_NUMERIC_RE.test(String(p.match_id)));
+    const oddsApiPreds = preds.filter((p) => p.ft_status!=='AWARDED'&& !ISPORTS_NUMERIC_RE.test(String(p.match_id)));
 
+    const awardedByPrediction=new Map<string,any>();
     const byDate: Record<string, any[]> = {};
-    for (const p of isportsPreds) {
+    for (const p of preds.filter(p=>p.ft_status!=='AWARDED')) {
       if (!p.kickoff) continue;
       const d = new Date(p.kickoff).toISOString().slice(0, 10);
       (byDate[d] ??= []).push(p);
@@ -579,7 +580,7 @@ export const updateResults = createServerFn({ method: "POST" })
     for (const [date, group] of Object.entries(byDate)) {
       let results: Awaited<ReturnType<typeof fetchResultsByDate>>;
       try {
-        results = await fetchResultsByDate(date);
+        results = await fetchResultsByDate(date,group);
       } catch (e: any) {
         failedDates++;
         console.warn(`[updateResults] date=${date} fetch failed, skipping: ${e?.message ?? e}`);
@@ -587,11 +588,13 @@ export const updateResults = createServerFn({ method: "POST" })
       }
       totalResults += results.length;
       const map = new Map(results.map((r) => [r.matchId, r]));
+      for(const p of group){const r=matchSavedResult(p,results);if(r?.status==='AWARDED')awardedByPrediction.set(p.id,r);}
       console.log(`[updateResults] date=${date} predictions=${group.length} finishedResults=${results.length}`);
       for (const p of group) {
+        if(!ISPORTS_NUMERIC_RE.test(String(p.match_id)))continue;
         const r = matchSavedResult(p, results);
         if (!r) { noResultFound++; continue; }
-        if (r.homeScore == null && r.awayScore == null) { skipped++; continue; }
+        if (r.homeScore == null && r.awayScore == null && r.status!=='AWARDED') { skipped++; continue; }
         const correct = gradePrediction(p.prediction_type, p.selection, r);
         const totalC = (r.homeCorners ?? 0) + (r.awayCorners ?? 0);
         await supabaseAdmin
@@ -621,15 +624,15 @@ export const updateResults = createServerFn({ method: "POST" })
         results = await fetchOddsApiResults(sportKey);
       } catch (e: any) {
         failedDates++;
-        console.warn(`[updateResults] oddsapi sportKey=${sportKey} fetch failed, skipping: ${e?.message ?? e}`);
-        continue;
+        console.warn(`[updateResults] oddsapi sportKey=${sportKey} fetch failed: ${e?.message ?? e}`);
+        results=[];
       }
       totalResults += results.length;
       const map = new Map(results.map((r) => [r.matchId, r]));
       for (const p of group) {
-        const r = map.get(String(p.match_id));
+        const r = awardedByPrediction.get(p.id)??map.get(String(p.match_id));
         if (!r) { noResultFound++; continue; }
-        if (r.homeScore == null && r.awayScore == null) { skipped++; continue; }
+        if (r.homeScore == null && r.awayScore == null && r.status!=='AWARDED') { skipped++; continue; }
         const correct = gradePrediction(p.prediction_type, p.selection, r);
         await supabaseAdmin
           .from("predictions")
@@ -669,11 +672,12 @@ export async function updateAllPendingResultsInternal(apiKey?: 1 | 2) {
   if (error) throw new Error(error.message);
   if (!preds || !preds.length) return { updated: 0, stillPending: 0, dates: 0, totalScanned: 0 };
 
-  const isportsPreds = preds.filter((p) => ISPORTS_NUMERIC_RE.test(String(p.match_id)));
-  const oddsApiPreds = preds.filter((p) => !ISPORTS_NUMERIC_RE.test(String(p.match_id)));
+  const isportsPreds = preds.filter((p) => p.ft_status!=='AWARDED'&& ISPORTS_NUMERIC_RE.test(String(p.match_id)));
+  const oddsApiPreds = preds.filter((p) => p.ft_status!=='AWARDED'&& !ISPORTS_NUMERIC_RE.test(String(p.match_id)));
 
+  const awardedByPrediction=new Map<string,any>();
   const byDate: Record<string, any[]> = {};
-  for (const p of isportsPreds) {
+  for (const p of preds.filter(p=>p.ft_status!=='AWARDED')) {
     if (!p.kickoff) continue;
     const d = new Date(p.kickoff).toISOString().slice(0, 10);
     (byDate[d] ??= []).push(p);
@@ -686,17 +690,19 @@ export async function updateAllPendingResultsInternal(apiKey?: 1 | 2) {
   for (const [date, group] of Object.entries(byDate)) {
     let results: Awaited<ReturnType<typeof fetchResultsByDate>>;
     try {
-      results = await fetchResultsByDate(date);
+      results = await fetchResultsByDate(date,group);
     } catch (e: any) {
       failedDates++;
       console.warn(`[updateAllPendingResults] date=${date} fetch failed, skipping: ${e?.message ?? e}`);
-      stillPending += group.length;
+      stillPending += group.filter(p=>ISPORTS_NUMERIC_RE.test(String(p.match_id))).length;
       continue;
     }
     const map = new Map(results.map((r) => [r.matchId, r]));
+    for(const p of group){const r=matchSavedResult(p,results);if(r?.status==='AWARDED')awardedByPrediction.set(p.id,r);}
     for (const p of group) {
+      if(!ISPORTS_NUMERIC_RE.test(String(p.match_id)))continue;
       const r = matchSavedResult(p, results);
-      if (!r || (r.homeScore == null && r.awayScore == null)) { stillPending++; continue; }
+      if (!r || (r.homeScore == null && r.awayScore == null && r.status!=='AWARDED')) { stillPending++; continue; }
       const correct = gradePrediction(p.prediction_type, p.selection, r);
       const totalC = (r.homeCorners ?? 0) + (r.awayCorners ?? 0);
       const { error: updateError } = await supabaseAdmin
@@ -728,14 +734,13 @@ export async function updateAllPendingResultsInternal(apiKey?: 1 | 2) {
       results = await fetchOddsApiResults(sportKey);
     } catch (e: any) {
       failedDates++;
-      console.warn(`[updateAllPendingResults] oddsapi sportKey=${sportKey} fetch failed, skipping: ${e?.message ?? e}`);
-      stillPending += group.length;
-      continue;
+      console.warn(`[updateAllPendingResults] oddsapi sportKey=${sportKey} fetch failed: ${e?.message ?? e}`);
+      results=[];
     }
     const map = new Map(results.map((r) => [r.matchId, r]));
     for (const p of group) {
-      const r = map.get(String(p.match_id));
-      if (!r || (r.homeScore == null && r.awayScore == null)) { stillPending++; continue; }
+      const r = awardedByPrediction.get(p.id)??map.get(String(p.match_id));
+      if (!r || (r.homeScore == null && r.awayScore == null && r.status!=='AWARDED')) { stillPending++; continue; }
       const correct = gradePrediction(p.prediction_type, p.selection, r);
       const { error: updateError } = await supabaseAdmin
         .from("predictions")
@@ -875,11 +880,13 @@ export const getDailyPicks = createServerFn({ method: "POST" })
       let combo: any = null;
       if (leg1 && leg2) {
         const legs = [leg1, leg2];
-        const bothGraded = legs.every((x) => x.is_correct !== null && x.is_correct !== undefined);
+        const awardReview=legs.some(x=>x.ft_status==='AWARDED');
+        const bothGraded = !awardReview&&legs.every((x) => x.is_correct !== null && x.is_correct !== undefined);
         const won = legs.every((x) => x.is_correct === true);
         const combinedOdds = legs.reduce((s, x) => s * Number(x.market_odds), 1);
         combo = {
           legs,
+          awardReview,
           combinedOdds: Math.round(combinedOdds * 100) / 100,
           isCorrect: bothGraded ? won : null,
           profit: bothGraded ? Math.round((won ? combinedOdds - 1 : -1) * 100) / 100 : null,
@@ -899,3 +906,7 @@ export const getDailyPicks = createServerFn({ method: "POST" })
     const totalCount = count ?? 0;
     return { days: results, totalDays: totalCount, page, pageSize, totalPages: Math.max(1, Math.ceil(totalCount / pageSize)) };
   });
+
+export const markPredictionAwarded=createServerFn({method:'POST'})
+ .inputValidator((d:unknown)=>z.object({predictionId:z.string().uuid(),accessToken:z.string().min(20)}).parse(d))
+ .handler(async({data})=>{await requireAdmin(data.accessToken);const {data:row,error}=await supabaseAdmin.from('predictions').select('match_id,kickoff').eq('id',data.predictionId).single();if(error||!row||!row.match_id)throw new Error('Saved prediction not found.');if(!row.kickoff||Date.parse(row.kickoff)>Date.now())throw new Error('Use this only after kickoff, once the award is confirmed.');const {error:saveError}=await supabaseAdmin.from('predictions').update({ft_status:'AWARDED',is_correct:null,total_corners:null,results_updated_at:new Date().toISOString()}).eq('match_id',row.match_id);if(saveError)throw new Error(saveError.message);return {ok:true};});

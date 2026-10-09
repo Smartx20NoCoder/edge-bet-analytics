@@ -2,7 +2,7 @@ import { adminAccessToken, useAdminAccess } from "@/lib/admin-session";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getAnalyses, getPredictions, updateAllPendingResults } from "@/lib/predictions.functions";
+import { getAnalyses, getPredictions, updateAllPendingResults,markPredictionAwarded } from "@/lib/predictions.functions";
 import { useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Loader2, RefreshCw, TrendingUp } from "lucide-react";
 import { PredictionCard, type Prediction } from "@/components/PredictionCard";
@@ -268,6 +268,10 @@ function HistoryPage() {
 }
 
 function HistoryItem({ a, open, onToggle, fp, typeFilter, evFilter }: any) {
+  const isAdmin=useAdminAccess();
+  const qc=useQueryClient();
+  const mark=useServerFn(markPredictionAwarded);
+  const markMut=useMutation({mutationFn:async(predictionId:string)=>mark({data:{predictionId,accessToken:await adminAccessToken()}}),onSuccess:()=>{toast.success('Marked awarded · excluded from played-match grading.');void qc.invalidateQueries();},onError:(e:Error)=>toast.error(e.message)});
   const q = useQuery({
     queryKey: ["preds", "analysis", a.id],
     queryFn: () => fp({ data: { analysisId: a.id } }),
@@ -319,7 +323,7 @@ function HistoryItem({ a, open, onToggle, fp, typeFilter, evFilter }: any) {
           <div className="text-xs text-muted-foreground">{preds.length} picks shown</div>
           {q.isLoading ? <p className="text-sm text-muted-foreground">Loading picks…</p> :
            preds.length === 0 ? <p className="text-sm text-muted-foreground">No picks for this filter.</p> :
-           <div className="grid md:grid-cols-2 gap-4">{preds.map((p) => <PredictionCard key={p.id} p={p} />)}</div>}
+           <div className="grid md:grid-cols-2 gap-4">{preds.map((p) => <PredictionCard key={p.id} p={p} marking={markMut.isPending} onMarkAwarded={isAdmin&&p.kickoff&&Date.parse(p.kickoff)<=Date.now()?()=>{if(confirm("Mark this match as awarded? All its predictions will be excluded from played-match grading."))markMut.mutate(p.id);}:undefined} />)}</div>}
         </div>
       )}
     </div>

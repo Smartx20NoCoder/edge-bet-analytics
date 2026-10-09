@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {awardedMatchNotice,verifiedGoalooStatus} from '../src/lib/goaloo-result-policy.ts';
+for(const s of ['Awarded','Match awarded to the away team','Walkover','Win awarded 3-0','Technical defeat','Match was awarded 0–3','Forfeited'])assert.ok(awardedMatchNotice(s),s);
+for(const s of ['Finished 3-0','Goal awarded','Penalty awarded','Home win','Match not awarded','No walkover','Award overturned',null])assert.equal(awardedMatchNotice(s),null,s);
+const html=(content,extra='')=>`<script>var scheduleId = 123; var m={state:parseInt('-1')}</script><div id="mScore"><div>${content}</div></div>${extra}`;
+assert.equal(verifiedGoalooStatus(html('Finished 3–0'), '123').awarded,undefined);
+assert.equal(verifiedGoalooStatus(html('Finished','<div id="matchRemark">Match awarded 3–0</div>'),'123').awarded,true);
+assert.equal(verifiedGoalooStatus(html('Walkover'),'123').awarded,true);
+assert.equal(verifiedGoalooStatus(html('Finished','<div id="events">Goal awarded; match awarded last season</div><script>var note="Walkover";</script>'),'123').awarded,undefined);
+assert.throws(()=>verifiedGoalooStatus(html('Awarded'),'999'),/verified/);
+console.log('Explicit match awards detected; ordinary scores, VAR events, history and wrong match IDs excluded.');

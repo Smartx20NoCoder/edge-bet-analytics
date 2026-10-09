@@ -465,8 +465,9 @@ export function predictMatchOutcomes(
 export function gradePrediction(
   predictionType: string,
   selection: string,
-  r: { homeScore: number | null; awayScore: number | null; homeCorners: number | null; awayCorners: number | null },
+  r: { homeScore: number | null; awayScore: number | null; homeCorners: number | null; awayCorners: number | null; status?:string|null },
 ): boolean | null {
+  if(r.status==='AWARDED')return null;
   const hs = r.homeScore, as = r.awayScore;
   const corners = (r.homeCorners ?? 0) + (r.awayCorners ?? 0);
   const cornersOk = r.homeCorners != null && r.awayCorners != null;

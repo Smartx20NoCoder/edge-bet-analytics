@@ -15,7 +15,8 @@ const TYPE_LABEL: Record<string, string> = {
 
 function PickRow({ p, compact }: { p: any; compact?: boolean }) {
   const ev = p.expected_value != null ? Number(p.expected_value) : null;
-  const graded = p.is_correct !== null && p.is_correct !== undefined;
+  const awarded=p.ft_status==='AWARDED';
+  const graded = !awarded&&p.is_correct !== null && p.is_correct !== undefined;
   const kickoff = p.kickoff ? new Date(p.kickoff) : null;
   const validKickoff = kickoff !== null && Number.isFinite(kickoff.getTime());
   return (
@@ -45,7 +46,7 @@ function PickRow({ p, compact }: { p: any; compact?: boolean }) {
             {p.is_correct ? "Won" : "Lost"}
           </div>
         )}
-        {!graded && <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1"><Clock className="h-3 w-3" /> Pending</div>}
+        {awarded&&<div className="text-[11px] text-muted-foreground">— Awarded · not graded</div>}{!graded&&!awarded && <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1"><Clock className="h-3 w-3" /> Pending</div>}
       </div>
     </div>
   );
@@ -84,7 +85,7 @@ function DayCard({ d }: { d: any }) {
             {d.combo.legs.map((leg: any) => <PickRow key={leg.id} p={leg} compact />)}
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 mt-1 border-t border-border/40">
               <span className="text-xs text-muted-foreground">Combined odds {d.combo.combinedOdds.toFixed(2)}</span>
-              {d.combo.isCorrect === null ? (
+              {d.combo.awardReview?<span className="text-[11px] text-muted-foreground">— Awarded leg · not graded</span>:d.combo.isCorrect === null ? (
                 <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1"><Clock className="h-3 w-3" /> Pending</span>
               ) : (
                 <span className={cn("text-[11px] font-semibold inline-flex items-center gap-1", d.combo.isCorrect ? "text-neon" : "text-destructive")}>

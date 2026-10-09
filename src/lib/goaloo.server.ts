@@ -1,5 +1,7 @@
 import { supabaseAdmin } from '@/integrations/supabase/client.server';
 import { readPublic, parseSchedule } from './goaloo-parser';
+import {awardedMatchNotice,verifiedGoalooStatus} from './goaloo-result-policy';
+import {matchSavedResult} from './goaloo-analysis';
 import { parseGoalooAnalysis } from './goaloo-analysis';
 import { collectGoalooOdds } from './goaloo-odds';
 import type { ScheduleMatch, LiveOdds, ResultRow } from './isports.server';
@@ -58,14 +60,26 @@ export async function hasMainOdds(id: string) {
   const odds=await fetchLiveOdds(id);
   return !!(odds.matchWinner||odds.goals25);
 }
-export type GoalooResult=ResultRow & {homeName:string;awayName:string;kickoff:string};
-export async function fetchResultsByDate(date: string): Promise<GoalooResult[]> {
-  return (await schedule(date,60)).filter(f=>f.state===-1).map(f=>({
-    matchId:`goaloo:${f.id}`,homeName:f.home,awayName:f.away,kickoff:f.kickoff,
-    homeScore: Number.isInteger(f.raw[8])?f.raw[8]:null,awayScore:Number.isInteger(f.raw[9])?f.raw[9]:null,
-    // Missing corner values remain null; never settle corners with an invented zero.
-    homeCorners:Number.isInteger(f.raw[23])&&Number.isInteger(f.raw[24])&&f.raw[23]+f.raw[24]>0?f.raw[23]:null,awayCorners:Number.isInteger(f.raw[23])&&Number.isInteger(f.raw[24])&&f.raw[23]+f.raw[24]>0?f.raw[24]:null,status:'FT',
-  })).filter(r=>r.homeScore!==null&&r.awayScore!==null);
+export type GoalooResult=ResultRow & {homeName:string;awayName:string;kickoff:string;awardReason?:string};
+export async function fetchResultsByDate(date: string,predictions?:any[]): Promise<GoalooResult[]> {
+ const rows=(await schedule(date,60)).filter(f=>f.state===-1||awardedMatchNotice(f.raw[19])||awardedMatchNotice(f.raw[21])).map(f=>{
+  const reason=awardedMatchNotice(f.raw[19])??awardedMatchNotice(f.raw[21]);
+  return {matchId:`goaloo:${f.id}`,homeName:f.home,awayName:f.away,kickoff:f.kickoff,
+   homeScore:Number.isInteger(f.raw[8])?f.raw[8]:null,awayScore:Number.isInteger(f.raw[9])?f.raw[9]:null,
+   homeCorners:!reason&&Number.isInteger(f.raw[23])&&Number.isInteger(f.raw[24])&&f.raw[23]+f.raw[24]>0?f.raw[23]:null,
+   awayCorners:!reason&&Number.isInteger(f.raw[23])&&Number.isInteger(f.raw[24])&&f.raw[23]+f.raw[24]>0?f.raw[24]:null,
+   status:reason?'AWARDED':'FT',...(reason?{awardReason:reason}:{})} as GoalooResult;
+ }).filter(r=>r.status==='AWARDED'||r.homeScore!==null&&r.awayScore!==null);
+ if(!predictions)return rows;
+ // Verify only saved matches, not every game on the day's schedule. One cached
+ // page check covers all markets and both model sources for the same fixture.
+ const selected=rows.filter(r=>predictions.some(p=>matchSavedResult(p,[r]))),verified:GoalooResult[]=[];let cursor=0;
+ await Promise.all(Array.from({length:Math.min(4,selected.length)},async()=>{while(cursor<selected.length){const r=selected[cursor++];try{
+  if(r.status==='AWARDED'){verified.push(r);continue;}
+  const id=idOf(r.matchId),status=await cached(`__goaloo_result_status_${id}`,3600,async()=>verifiedGoalooStatus(await readPublic(`https://www.goaloo.com/football/match/live-${id}`),id));
+  if(status.awarded)verified.push({...r,status:'AWARDED',awardReason:status.reason,homeCorners:null,awayCorners:null});else if(status.state===-1)verified.push(r);
+ }catch(e){console.warn('[Goaloo] Result status could not be verified; match left ungraded:',r.matchId,e instanceof Error?e.message:'Source unavailable');}}}));
+ return verified;
 }
 // Kept as a compatibility shim for older callers; Goaloo requires no API key.
 export function setForcedKey(_idx:1|2|null) {}
