@@ -1,3 +1,4 @@
+import {AutomaticResultsRefresh} from '@/components/AutomaticResultsRefresh';
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { Activity, History, LayoutDashboard, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -74,6 +75,7 @@ export function AppLayout() {
         </nav>
       </header>
       <main className="flex-1 min-w-0">
+        <AutomaticResultsRefresh />
         <Outlet />
       </main>
       <footer className="border-t py-6 px-3 text-center text-xs text-muted-foreground">

@@ -662,14 +662,13 @@ export const updateAllPendingResults = createServerFn({ method: "POST" })
   });
 
 // Server-only implementation: cron authorizes its request before calling this.
-export async function updateAllPendingResultsInternal(apiKey?: 1 | 2) {
+export async function updateAllPendingResultsInternal(apiKey?: 1 | 2, options: {automatic?: boolean} = {}) {
   const forced = apiKey ?? null;
   if (forced) setForcedKey(forced);
   try {
-  const { data: preds, error } = await supabaseAdmin
-    .from("predictions")
-    .select("*")
-    .is("is_correct", null);
+  let pendingQuery = supabaseAdmin.from("predictions").select("*").is("is_correct", null);
+  if (options.automatic) pendingQuery = pendingQuery.lte("kickoff", new Date(Date.now()-110*60000).toISOString());
+  const { data: preds, error } = await pendingQuery;
   if (error) throw new Error(error.message);
   if (!preds || !preds.length) return { updated: 0, stillPending: 0, dates: 0, totalScanned: 0 };
 

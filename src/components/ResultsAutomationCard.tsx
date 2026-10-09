@@ -29,7 +29,7 @@ export function ResultsAutomationCard() {
         data: {
           accessToken: session.session.access_token,
           enabled: nextEnabled,
-          interval: nextEnabled ? "24h" : "off",
+          interval: nextEnabled ? "4h" : "off",
         },
       });
       await qc.invalidateQueries({ queryKey: ["results-automation"] });
@@ -64,13 +64,13 @@ export function ResultsAutomationCard() {
             enabled ? "bg-neon/15 border-neon/50 text-neon" : "border-border text-muted-foreground hover:text-foreground"
           }`}
         >
-          Daily (24 hours)
+          Every 4 hours + on opening
         </button>
       </div>
 
       <div className="rounded-lg border border-border/60 p-3 text-xs text-muted-foreground space-y-1">
-        <p><span className="font-semibold text-foreground">Current:</span> {enabled ? "Daily (24 hours)" : "Off"}</p>
-        <p><span className="font-semibold text-foreground">Schedule:</span> 1:15 a.m. WAT daily (00:15 UTC). Free-plan runs can start later within the hour.</p>
+        <p><span className="font-semibold text-foreground">Current:</span> {enabled ? "Every 4 hours + on opening" : "Off"}</p>
+        <p><span className="font-semibold text-foreground">Schedule:</span> 03:15, 07:15, 11:15, 15:15, 19:15 and 23:15 WAT. Also checks when you open or return to the admin app; repeated checks are throttled.</p>
         <p><span className="font-semibold text-foreground">Manual backup:</span> the existing Update Results action remains available at any time.</p>
         {q.data?.lastRun && <p><span className="font-semibold text-foreground">Last automated run:</span> {new Date(q.data.lastRun).toLocaleString()}</p>}
       </div>

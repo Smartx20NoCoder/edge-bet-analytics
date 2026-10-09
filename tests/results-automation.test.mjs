@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import {registerHooks} from 'node:module';
+const db=`export const supabaseAdmin={async rpc(){globalThis.claims++;return {data:globalThis.claimed?'test-run-id':null,error:null}},from(name){return {select(){return this},eq(){return this},async maybeSingle(){return {data:{results_automation_enabled:globalThis.enabled},error:null}},update(v){this.row=v;return this},then(resolve){globalThis.saved.push({table:name,...this.row});resolve({error:null})}}}};`;
+const modules={'@/integrations/supabase/client.server':db,'./predictions.functions.ts':`export async function updateAllPendingResultsInternal(key,options){globalThis.calls++;globalThis.options=options;if(globalThis.fail)throw new Error('source failed');return {updated:2,stillPending:1}};`, '@tanstack/react-router':`export const createFileRoute=()=>x=>x;`};
+registerHooks({resolve(s,c,next){if(s.startsWith('@/lib/'))s='../src/lib/'+s.slice(6);if(s==='../src/lib/automatic-results.server')s=new URL('../src/lib/automatic-results.server.ts',import.meta.url).href;if(s.startsWith('./')&&!/\.(?:ts|tsx|js|mjs)$/.test(s))s+='.ts';if(modules[s])return {url:'data:text/javascript,'+encodeURIComponent(modules[s]),shortCircuit:true};return next(s,c)}});
+const {runAutomaticResultsUpdate}=await import('../src/lib/automatic-results.server.ts');
+const reset=()=>Object.assign(globalThis,{claims:0,calls:0,saved:[],enabled:true,claimed:true,fail:false});
+reset();globalThis.enabled=false;assert.equal((await runAutomaticResultsUpdate()).reason,'automation_disabled');assert.equal(globalThis.claims,0);
+reset();globalThis.claimed=false;assert.equal((await runAutomaticResultsUpdate()).skipped,true);assert.equal(globalThis.calls,0);
+reset();assert.equal((await runAutomaticResultsUpdate()).updated,2);assert.equal(globalThis.options.automatic,true);assert.ok(globalThis.saved.some(r=>r.table==='engine_settings'&&r.results_automation_last_run));
+reset();globalThis.fail=true;await assert.rejects(()=>runAutomaticResultsUpdate(),/source failed/);assert.ok(globalThis.saved.some(r=>r.summary?.failed));assert.ok(!globalThis.saved.some(r=>r.results_automation_last_run));
+const {Route}=await import('../src/routes/api/cron/update-results.ts');
+process.env.RESULTS_SCHEDULE_SECRET='fake-results-test-secret';delete process.env.CRON_SECRET;
+const request=(token)=>({request:new Request('https://test/api/cron/update-results',{headers:token?{authorization:'Bearer '+token}:{}})});
+reset();assert.equal((await Route.server.handlers.GET(request())).status,401);assert.equal(globalThis.calls,0);
+assert.equal((await Route.server.handlers.GET(request('fake-results-test-secret'))).status,200);assert.equal(globalThis.calls,1);
+console.log('Automatic result checks: auth, disabled setting, shared lease/throttle, confirmed-result cutoff, success marking and failure recovery passed.');
