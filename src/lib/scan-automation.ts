@@ -1,7 +1,9 @@
 import { z } from "zod";
+export const MAX_SCAN_MATCHES=500;
+export const MATCH_LIMIT_PRESETS=[20,40,60,80,100,200,500];
 export const ScanConfig = z.object({
   timeframeHours: z.number().int().min(1).max(24).default(24),
-  maxMatches: z.number().int().min(1).max(100).default(100),
+  maxMatches: z.number().int().min(1).max(MAX_SCAN_MATCHES).default(MAX_SCAN_MATCHES),
   minOdds: z.number().min(1).max(10).default(1.5),
   maxOdds: z.number().min(1).max(20).default(2.3),
   trustedOnly: z.boolean().default(false),

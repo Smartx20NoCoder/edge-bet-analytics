@@ -74,7 +74,7 @@ const RunInput = z.object({
   accessToken: z.string().min(20),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   timeframeHours: z.number().int().min(1).max(48).optional(),
-  maxMatches: z.number().int().min(1).max(40).optional(),
+  maxMatches: z.number().int().min(1).max(500).optional(),
   maxPicks: z.number().int().min(1).max(10).optional(),
   minOdds: z.number().min(1).max(10).optional(),
   trustedOnly: z.boolean().optional(),

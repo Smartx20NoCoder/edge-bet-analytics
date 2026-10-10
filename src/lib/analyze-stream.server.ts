@@ -1,3 +1,4 @@
+import {MAX_SCAN_MATCHES} from "@/lib/scan-automation";
 import { isCronAuthorized } from "@/lib/cron-auth.server";
 import { requireAdmin } from "@/lib/admin-auth.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
@@ -62,7 +63,8 @@ export async function handleAnalyzeStream(request: Request) {
         const url = new URL(request.url);
         const date = url.searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
         const timeframeHours = Number(url.searchParams.get("timeframeHours") ?? 24);
-        const maxMatches = Math.max(1, Math.min(100, Number(url.searchParams.get("maxMatches") ?? 100)));
+        const maxMatches = Number(url.searchParams.get("maxMatches") ?? MAX_SCAN_MATCHES);
+        if (!Number.isInteger(maxMatches) || maxMatches < 1 || maxMatches > MAX_SCAN_MATCHES) return Response.json({error:"Choose a whole match limit from 1 to 500."},{status:400});
         const minOdds = Number(url.searchParams.get("minOdds") ?? 1);
         const trustedOnly = url.searchParams.get("trustedOnly") !== "false";
         const refresh = url.searchParams.get("refresh") === "true";

@@ -8,9 +8,13 @@ const modules={
  '@/integrations/supabase/client.server':`export const supabaseAdmin={from(){let write;return {select(){return this},eq(){return this},is(){return this},single(){return Promise.resolve({data:globalThis.settings,error:null})},update(v){write=v;return this},then(resolve){if(write){globalThis.writes.push(write);resolve({data:globalThis.race?[]:[{id:true}],error:null})}else resolve({data:globalThis.settings,error:null})}}}}`,
 };
 registerHooks({resolve(s,c,next){if(modules[s])return {url:modules[s].startsWith('file:')?modules[s]:'data:text/javascript,'+encodeURIComponent(modules[s]),shortCircuit:true};return next(s,c)}});
-const {DEFAULT_SCAN_CONFIG,cronScanParams,watDay}=await import('../src/lib/scan-automation.ts');
+const {DEFAULT_SCAN_CONFIG,ScanConfig,cronScanParams,watDay}=await import('../src/lib/scan-automation.ts');
 assert.equal(watDay(new Date('2026-10-07T23:30:00Z')),'2026-10-08');
 const params=cronScanParams(DEFAULT_SCAN_CONFIG,new Date('2026-10-07T09:00:00Z'));
+assert.equal(DEFAULT_SCAN_CONFIG.maxMatches,500);
+assert.equal(ScanConfig.parse({maxMatches:357}).maxMatches,357);
+for(const maxMatches of [0,501,1.5])assert.throws(()=>ScanConfig.parse({maxMatches}));
+assert.equal(params.get('maxMatches'),'500');
 assert.equal(params.get('timeframeHours'),'14');assert.equal(params.get('date'),'2026-10-07');assert.equal(params.get('engine'),'combined');
 const {Route}=await import('../src/routes/api/cron/auto-scan.ts');
 async function run(auth=true){return Route.server.handlers.GET({request:new Request('https://example.test/api/cron/auto-scan',{headers:auth?{authorization:'Bearer test-cron-only'}:{}})})}

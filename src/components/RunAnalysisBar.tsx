@@ -1,3 +1,4 @@
+import {MAX_SCAN_MATCHES,MATCH_LIMIT_PRESETS} from "@/lib/scan-automation";
 import { getScanAutomation, setScanAutomation } from "@/lib/scan-automation.functions";
 import { adminAccessToken } from "@/lib/admin-session";
 import { useEffect, useRef, useState } from "react";
@@ -33,7 +34,7 @@ function todayISO() {
 export function RunAnalysisBar() {
   const [date, setDate] = useState(todayISO());
   const [timeframeHours, setTimeframeHours] = useState(24);
-  const [maxMatches, setMaxMatches] = useState(100);
+  const [maxMatches, setMaxMatches] = useState(MAX_SCAN_MATCHES);
   // Recommended defaults for EV research: widen the odds range rather than narrow it —
   // very short odds can't carry meaningful EV even when "correct," very long odds are
   // where model error compounds.
@@ -97,6 +98,7 @@ export function RunAnalysisBar() {
   };
 
   const start = async (engine: "combined" | "dual_free" = "combined") => {
+    if(!Number.isInteger(maxMatches)||maxMatches<1||maxMatches>MAX_SCAN_MATCHES){toast.error("Enter a whole match limit from 1 to 500.");return;}
     setOpen(true);
     setRunning(true);
     setLog([]);
@@ -238,16 +240,19 @@ export function RunAnalysisBar() {
             ))}
           </div>
         </Field>
-        <Field label="Max Matches" Icon={Hash} htmlFor="scan-max-matches">
+        <Field label="Max Matches · 1–500" Icon={Hash} htmlFor="scan-max-matches">
           <input
             id="scan-max-matches"
             type="number"
             min={1}
-            max={100}
-            value={maxMatches}
-            onChange={(e) => setMaxMatches(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
+            max={MAX_SCAN_MATCHES}
+            step={1}
+            list="edge-match-limits"
+            value={Number.isNaN(maxMatches)?"":maxMatches}
+            onChange={(e) => setMaxMatches(e.target.value===""?NaN:Number(e.target.value))}
             className="h-9 w-full rounded-md bg-secondary border border-border px-3 text-sm font-mono"
           />
+          <datalist id="edge-match-limits">{MATCH_LIMIT_PRESETS.map(n=><option key={n} value={n}/>)}</datalist>
         </Field>
         <Field label={`Odds Range: ${minOdds.toFixed(2)} – ${maxOdds.toFixed(2)}`} Icon={TrendingUp}>
           <RangeWithBounds
