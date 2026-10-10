@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { watchAdminAccess } from "@/lib/admin-access";
 import { supabase } from "@/integrations/supabase/client";
 export async function adminAccessToken() {
   const { data } = await supabase.auth.getSession();
@@ -7,18 +8,6 @@ export async function adminAccessToken() {
 }
 export function useAdminAccess() {
   const [isAdmin, setIsAdmin] = useState(false);
-  useEffect(() => {
-    let active = true;
-    const check = async () => {
-      const { data } = await supabase.auth.getUser();
-      if (active) setIsAdmin(data.user?.app_metadata?.role === "admin");
-    };
-    void check();
-    const { data } = supabase.auth.onAuthStateChange(() => {
-      if (active) setIsAdmin(false);
-      setTimeout(() => { if (active) void check(); }, 0);
-    });
-    return () => { active = false; data.subscription.unsubscribe(); };
-  }, []);
+  useEffect(() => watchAdminAccess(supabase.auth, setIsAdmin), []);
   return isAdmin;
 }

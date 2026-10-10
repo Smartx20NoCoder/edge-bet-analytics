@@ -31,10 +31,7 @@ export function AutomaticResultsRefresh() {
     }
     void check();
     const timer = window.setInterval(() => {void check();}, 4*60*60*1000);
-    const onReturn = () => {void check();};
-    window.addEventListener('focus', onReturn);
-    document.addEventListener('visibilitychange', onReturn);
-    return () => {active = false; window.clearInterval(timer); window.removeEventListener('focus', onReturn); document.removeEventListener('visibilitychange', onReturn);};
+    return () => {active = false; window.clearInterval(timer);};
   }, [isAdmin, refresh, qc]);
   return isAdmin && message ? <p role="status" className="mx-auto w-full max-w-6xl px-3 sm:px-4 lg:px-6 pt-3 text-xs text-muted-foreground">{message}</p> : null;
 }
