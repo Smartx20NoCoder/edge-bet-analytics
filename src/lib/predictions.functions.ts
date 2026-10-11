@@ -1,13 +1,22 @@
 import {isVoidStatus,settleSlip} from './slip-settlement';
 import { selectDailyPair } from "./daily-pick-selection";
 import { matchSavedResult } from "./goaloo-analysis";
-import { createServerFn } from "@tanstack/react-start";
+import { createServerFn, createServerOnlyFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { fetchMatchAnalysis, fetchResultsByDate, fetchScheduleByDate, fetchLiveOdds, setForcedKey } from "./goaloo.server";
 import { gradePrediction, predictCorners, predictMatchOutcomes, meetsConfidenceThreshold } from "./predictions.server";
 import { fetchOddsApiResults } from "./oddsapi.server";
 import { requireAdmin } from "./admin-auth.server";
+
+const publishEdgeSinglesSafely = createServerOnlyFn(async () => {
+  const telegram = await import('./telegram.server');
+  await telegram.publishEdgeSinglesSafely();
+});
+const syncEdgeTelegramResultsSafely = createServerOnlyFn(async (ids?: string[]) => {
+  const telegram = await import('./telegram.server');
+  await telegram.syncEdgeTelegramResultsSafely(ids);
+});
 
 const BLOCKED_KEYWORDS = [
   "friendly", "futsal", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve", "women",
@@ -651,6 +660,7 @@ export const updateResults = createServerFn({ method: "POST" })
     }
 
     console.log(`[updateResults] analysisId=${data.analysisId} totalPreds=${preds.length} totalFinishedResults=${totalResults} updated=${updated} skipped=${skipped} noResultFound=${noResultFound} failedDates=${failedDates}`);
+    await syncEdgeTelegramResultsSafely(preds.map(p=>p.id));
     return { updated, skipped, noResultFound, failedDates };
   });
 
@@ -676,7 +686,7 @@ export async function updateAllPendingResultsInternal(apiKey?: 1 | 2, options: {
   }
   const { data: preds, error } = await pendingQuery;
   if (error) throw new Error(error.message);
-  if (!preds || !preds.length) return { updated: 0, stillPending: 0, dates: 0, totalScanned: 0 };
+  if (!preds || !preds.length) {await syncEdgeTelegramResultsSafely([]);return { updated: 0, stillPending: 0, dates: 0, totalScanned: 0 };}
 
   const isportsPreds = preds.filter((p) => !isVoidStatus(p.ft_status)&& ISPORTS_NUMERIC_RE.test(String(p.match_id)));
   const oddsApiPreds = preds.filter((p) => !isVoidStatus(p.ft_status)&& !ISPORTS_NUMERIC_RE.test(String(p.match_id)));
@@ -765,6 +775,7 @@ export async function updateAllPendingResultsInternal(apiKey?: 1 | 2, options: {
   }
 
   console.log(`[updateAllPendingResults] scanned=${preds.length} updated=${updated} stillPending=${stillPending} dates=${dates.length + leagueKeys.length} failedDates=${failedDates} forcedKey=${forced ?? "auto"}`);
+  await syncEdgeTelegramResultsSafely(preds.map(p=>p.id));
   return { updated, stillPending, dates: dates.length + leagueKeys.length, totalScanned: preds.length, failedDates };
   } finally {
     if (forced) setForcedKey(null);
@@ -822,6 +833,7 @@ export async function lockDailyBestPickIfNeeded(): Promise<void> {
     const { error: insertErr } = await supabaseAdmin.from("daily_best_picks").upsert(row, { onConflict: "day", ignoreDuplicates: true });
     if (insertErr) throw new Error(`Daily picks save failed for ${day}: ${insertErr.message}`);
   }
+  await publishEdgeSinglesSafely();
 }
 
 export const getDailyPicks = createServerFn({ method: "POST" })
@@ -914,5 +926,5 @@ export const markPredictionAwarded = createServerFn({method:"POST"})
   const fixture={matchId:row.match_id,homeName:row.home_team,awayName:row.away_team,kickoff:row.kickoff};
   const ids=[...new Set([data.predictionId,...(siblings??[]).filter(p=>p.match_id===row.match_id||(row.home_team&&row.away_team&&matchSavedResult(p,[fixture]))).map(p=>p.id)])];
   const {error:saveError}=await supabaseAdmin.from('predictions').update({ft_status:'AWARDED',is_correct:null,total_corners:null,results_updated_at:new Date().toISOString()}).in('id',ids);
-  if(saveError)throw new Error(saveError.message);return {ok:true};
+  if(saveError)throw new Error(saveError.message);await syncEdgeTelegramResultsSafely(ids);return {ok:true};
  });

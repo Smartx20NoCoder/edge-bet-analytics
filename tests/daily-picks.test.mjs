@@ -22,7 +22,7 @@ const db={from(table){
     update(){throw new Error('Saved selections must never be updated')}
   };return query;
 }};
-const persist=new Function('supabaseAdmin','DAILY_PICK_TYPES','DAILY_PICK_EV_CEILING','selectDailyPair',js+';return lockDailyBestPickIfNeeded;')(db,[],.4,selectDailyPair);
+const persist=new Function('publishEdgeSinglesSafely','supabaseAdmin','DAILY_PICK_TYPES','DAILY_PICK_EV_CEILING','selectDailyPair',js+';return lockDailyBestPickIfNeeded;')(async()=>{},db,[],.4,selectDailyPair);
 await persist();
 assert.equal(writes,1);
 assert.equal(stored.day,day);

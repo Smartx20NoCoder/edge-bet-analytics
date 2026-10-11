@@ -8,6 +8,7 @@ import { LogOut } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {TelegramSinglesSettings} from "@/components/TelegramSinglesSettings";
 import { ResultsAutomationCard } from "@/components/ResultsAutomationCard";
 
 export const Route = createFileRoute("/settings")({
@@ -193,6 +194,8 @@ function Settings() {
         <p className="text-sm">{q.isLoading ? "Checking…" : q.data?.live ? "Available · No API key or trial renewal required" : `Currently unavailable: ${q.data?.error ?? "Check again shortly"}`}</p>
         <p className="mt-2 text-xs text-muted-foreground">Fixtures, match statistics, live bookmaker prices and full-time results come from Goaloo. The Odds API remains a separate scan option.</p>
       </div>
+
+      <TelegramSinglesSettings />
 
       <ResultsAutomationCard />
 
