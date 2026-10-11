@@ -47,7 +47,6 @@ function DataEngineBadge({ engine }: { engine?: "isports" | "goaloo" | "dual_fre
 const TYPE_FILTERS = [
   { id: "all", label: "All" },
   { id: "match_winner", label: "Match Winner" },
-  { id: "match_winner_hedged", label: "Hedged +0.5" },
   { id: "over_2_5_goals", label: "Over 2.5" },
 ];
 
