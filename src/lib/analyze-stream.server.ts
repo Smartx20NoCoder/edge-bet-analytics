@@ -57,7 +57,7 @@ const isTrusted = (n) => {
   return TRUSTED_LEAGUE_PATTERNS.some((p) => lower.includes(p));
 };
 
-export async function handleAnalyzeStream(request: Request) {
+export async function handleAnalyzeStream(request: Request, batch?: {processedIds:string[];remaining:number}) {
         try { if (!isCronAuthorized(request)) await requireAdmin(request.headers.get("authorization")?.replace(/^Bearer /, "") ?? ""); }
         catch { return Response.json({ error: "Administrator access required" }, { status: 401 }); }
         const url = new URL(request.url);
@@ -95,6 +95,7 @@ export async function handleAnalyzeStream(request: Request) {
             const requestedEngine = url.searchParams.get("engine") ?? "combined";
             const isportsAvailable = requestedEngine !== "dual_free";
             let summary={matchesAnalyzed:0,predictionsGenerated:0};
+            let goalooBatch={processedIds:[] as string[],checkedForOdds:0,skippedNoOdds:0,pending:false};
             let oddsApiAvailable = false;
             try {
               oddsApiAvailable = requestedEngine !== "goaloo" && (await getOddsApiKeysStatus()).availableKeys > 0;
@@ -162,6 +163,7 @@ export async function handleAnalyzeStream(request: Request) {
                   send("status", { message: `Skipping ${skippedExisting} matches already predicted in a previous scan.` });
                 }
               }
+              if(batch) dedupedPool=dedupedPool.filter(m=>!batch.processedIds.includes(String(m.matchId)));
               if (!dedupedPool.length) {
                 send("status", { message: `Goaloo: all ${sortedPool.length} qualifying matches were already predicted in earlier scans.` });
                 return;
@@ -178,18 +180,21 @@ export async function handleAnalyzeStream(request: Request) {
               let skippedNoOdds = 0;
               let checkedForOdds = 0;
               const scanDeadline = Date.now()+220000;
-              for (let offset=0; offset<dedupedPool.length && candidates.length<maxMatches && checkedForOdds<Math.max(maxMatches*3,100) && Date.now()<scanDeadline-90000; offset+=3) {
-                const group=dedupedPool.slice(offset,offset+Math.min(3,maxMatches-candidates.length));
+              const target=batch ? Math.min(maxMatches,batch.remaining,60) : maxMatches;
+              const noOddsIds:string[]=[];
+              for (let offset=0; offset<dedupedPool.length && candidates.length<target && checkedForOdds<Math.max(maxMatches*3,100) && Date.now()<scanDeadline-90000; offset+=3) {
+                const group=dedupedPool.slice(offset,offset+Math.min(3,target-candidates.length));
                 const checks=await Promise.all(group.map(async m=>{
                   checkedForOdds++;
                   try { return await hasMainOdds(m.matchId); }
                   catch(e:any) { send("status",{message:`Odds unavailable for ${m.homeName} vs ${m.awayName}: ${e.message}`}); return false; }
                 }));
-                group.forEach((m,i)=>{if(checks[i])candidates.push(m);else skippedNoOdds++;});
+                group.forEach((m,i)=>{if(checks[i])candidates.push(m);else {skippedNoOdds++;noOddsIds.push(String(m.matchId));}});
               }
               if (skippedNoOdds) {
                 send("status", { message: `Skipping ${skippedNoOdds} match(es) with no live odds available (checked ${checkedForOdds} matches to fill ${candidates.length} odds-covered slot${candidates.length === 1 ? "" : "s"}).` });
               }
+              goalooBatch={processedIds:noOddsIds,checkedForOdds,skippedNoOdds,pending:batch ? dedupedPool.some(m=>!noOddsIds.includes(String(m.matchId))) : false};
               if (!candidates.length) {
                 send("status", { message: `Goaloo: none of the ${dedupedPool.length} qualifying matches have live odds available right now.` });
                 return;
@@ -383,6 +388,8 @@ export async function handleAnalyzeStream(request: Request) {
                 send("status", { message: `${hedgedCount} sub-60%-confidence/sub-10%-EV Match Winner pick(s) hedged to a real +0.5 Asian Handicap line.` });
               }
 
+              const processedIds=[...noOddsIds,...seen];
+              goalooBatch={processedIds,checkedForOdds,skippedNoOdds,pending:!!batch && matchesChecked<batch.remaining && dedupedPool.some(m=>!processedIds.includes(String(m.matchId)))};
               summary={matchesAnalyzed:matchesChecked,predictionsGenerated:finalPreds.length};
               if (!finalPreds.length) {
                 send("status", { message: "Goaloo: no predictions generated this scan." });
@@ -403,7 +410,7 @@ export async function handleAnalyzeStream(request: Request) {
                   predictions_generated: finalPreds.length,
                   avg_confidence: Math.round(avg * 100) / 100,
                   status: "completed",
-                  notes: JSON.stringify({ engine: "goaloo", date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, skippedNoOdds, noOddsCount, hedgedCount, winRateFloor, drawRateCeil, over25Floor, matchWinnerFloor, doubleChanceFloor, cornersFloor }),
+                  notes: JSON.stringify({ engine: "goaloo", date, timeframeHours, maxMatches, minOdds, maxOdds, trustedOnly, betType, scanStartedAt, distinctLeagues, skippedExisting, checkedForOdds, eligibleFixtures:dedupedPool.length, skippedNoOdds, noOddsCount, hedgedCount, winRateFloor, drawRateCeil, over25Floor, matchWinnerFloor, doubleChanceFloor, cornersFloor }),
                 })
                 .select()
                 .single();
@@ -429,7 +436,7 @@ export async function handleAnalyzeStream(request: Request) {
             try {
               const failures: string[] = [];
               const completedSources: string[] = [];
-              if (isportsAvailable) {
+              if (isportsAvailable && (!batch || batch.remaining>0)) {
                 send("status", { message: "— Goaloo statistical scan starting —" });
                 try { await runIsportsScan(); completedSources.push("Goaloo"); }
                 catch (e) {
@@ -437,7 +444,8 @@ export async function handleAnalyzeStream(request: Request) {
                   send("status", { message: `Goaloo scan failed: ${e?.message ?? e}. Continuing with The Odds API.` });
                 }
               }
-              if (oddsApiAvailable) {
+              if(batch && batch.remaining<=0) completedSources.push("Goaloo");
+              if (oddsApiAvailable && !goalooBatch.pending) {
                 send("status", { message: "— Odds API (sharp-vs-soft) scan starting —" });
                 try {
                   const result = await runDualFreeScan({
@@ -459,13 +467,13 @@ export async function handleAnalyzeStream(request: Request) {
                   failures.push("Odds API");
                   send("status", { message: `Odds API scan failed: ${e?.message ?? e}. Saved Goaloo results are unaffected.` });
                 }
-              } else if (requestedEngine !== "goaloo") {
+              } else if (!goalooBatch.pending && requestedEngine !== "goaloo") {
                 send("status", { message: "No available Odds API key — Goaloo results are retained; configure the Odds API keys in Settings." });
                 failures.push("Odds API unavailable");
               }
               send("status", { message: "Both source phases finished. Selecting Single and Combo of the Day from the shared qualifying pool…" });
-              if (completedSources.length) await lockDailyBestPickIfNeeded();
-              send("done", { message: failures.length ? "Scan finished with source warnings." : "Scan complete.", ...summary, failures, completedSources });
+              if (completedSources.length && !goalooBatch.pending) await lockDailyBestPickIfNeeded();
+              send("done", { message: failures.length ? "Scan finished with source warnings." : "Scan complete.", ...summary, failures, completedSources, goalooBatch });
             } catch (e) {
               send("error", { message: e?.message ?? "scan failed" });
             } finally {

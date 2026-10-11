@@ -62,9 +62,9 @@ export const setAdminSportKeys = createServerFn({ method: "POST" })
   });
 
 export const setAdminOddsApiKeys = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => z.object({ accessToken: z.string().min(20), keys: z.array(z.string().min(1)).max(10) }).parse(d))
+  .inputValidator((d: unknown) => z.object({ accessToken: z.string().min(20), keys: z.array(z.string().min(1)).max(10), replace:z.boolean().default(false) }).parse(d))
   .handler(async ({ data }) => {
     await requireAdmin(data.accessToken);
-    await setOddsApiKeys(data.keys);
+    await setOddsApiKeys(data.keys,data.replace);
     return { ok: true };
   });

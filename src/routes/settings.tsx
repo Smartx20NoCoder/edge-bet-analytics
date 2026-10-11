@@ -35,6 +35,7 @@ function DataEngineCard() {
   const q = useQuery({ queryKey: ["engine-settings"], queryFn: async () => { const { data: session } = await supabase.auth.getSession(); if (!session.session?.access_token) throw new Error("Authentication required"); return fn({ data: { accessToken: session.session.access_token } }); } });
   const [sportKeysText, setSportKeysText] = useState("");
   const [oddsKeysText, setOddsKeysText] = useState("");
+  const [replaceOddsKeys,setReplaceOddsKeys]=useState(false);
   const [savingKeys, setSavingKeys] = useState(false);
   const [savingOddsKeys, setSavingOddsKeys] = useState(false);
   const [oddsKeysSavedAt, setOddsKeysSavedAt] = useState<number | null>(null);
@@ -63,13 +64,13 @@ function DataEngineCard() {
   }
 
   async function saveOddsKeys() {
-    const keys = oddsKeysText.split("\n").map((s) => s.trim()).filter(Boolean);
+    const keys = oddsKeysText.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean);
     if (!keys.length) return;
     setSavingOddsKeys(true);
     try {
       const { data: session } = await supabase.auth.getSession();
       if (!session.session?.access_token) throw new Error("Authentication required");
-      await setOddsKeysFn({ data: { accessToken: session.session.access_token, keys } });
+      await setOddsKeysFn({ data: { accessToken: session.session.access_token, keys, replace:replaceOddsKeys } });
       setOddsKeysText("");
       setOddsKeysSavedAt(Date.now());
       qc.invalidateQueries({ queryKey: ["engine-settings"] });
@@ -116,21 +117,22 @@ function DataEngineCard() {
               </span>
             </div>
             <Textarea
-              placeholder={"Paste one key per line — replaces the entire list on save.\ne.g.\nabc123...\ndef456..."}
+              placeholder={"Paste new keys, one per line — existing keys are kept.\ne.g.\nabc123...\ndef456..."}
               value={oddsKeysText}
               onChange={(e) => setOddsKeysText(e.target.value)}
               className="font-mono text-xs min-h-[80px]"
             />
             <div className="flex items-center justify-between">
               <p className="text-[11px] text-muted-foreground">
-                Supports rotation across multiple keys (currently used for a 2-key, 1,000/month combined setup — add a 3rd line for 1,500/month). Saving replaces the whole list, so paste ALL keys you want active, not just a new one.
+                Automatically rotates through all saved usable keys. Add keys without removing the existing list; select Replace only when intentionally replacing every key.
               </p>
               <Button onClick={saveOddsKeys} disabled={savingOddsKeys || !oddsKeysText.trim()} size="sm">
-                {savingOddsKeys ? "Saving…" : "Save"}
+                {savingOddsKeys ? "Saving…" : replaceOddsKeys ? "Replace all keys" : "Add keys"}
               </Button>
             </div>
+            <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={replaceOddsKeys} onChange={e=>setReplaceOddsKeys(e.target.checked)}/>Replace the entire saved key list</label>
             {oddsKeysSavedAt && Date.now() - oddsKeysSavedAt < 4000 && (
-              <p className="text-[11px] text-neon">Saved. Key list replaced — a scan will confirm which are usable.</p>
+              <p className="text-[11px] text-neon">Saved. Check the available-key count above; a scan will confirm live access.</p>
             )}
           </div>
 

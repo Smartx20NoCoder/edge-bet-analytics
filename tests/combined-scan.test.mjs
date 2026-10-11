@@ -6,9 +6,9 @@ const modules={
  '@/lib/cron-auth.server':`export const isCronAuthorized=()=>false;`,
  '@/lib/admin-auth.server':`export async function requireAdmin(token){if(token!=='test-admin-token-valid')throw new Error('unauthorized')}`,
  '@tanstack/react-router':`export const createFileRoute=()=>x=>x;`,
- '@/integrations/supabase/client.server':`export const supabaseAdmin={};`,
+ '@/integrations/supabase/client.server':`export const supabaseAdmin={from(){return {select(){return this},gte(){return this},lte(){return Promise.resolve({data:[]})},upsert(){return Promise.resolve({error:null})}}}};`,
  '@/lib/goaloo-analysis':`export const matchSavedResult=()=>null;`,
- '@/lib/goaloo.server':`export const setForcedKey=()=>{};export const hasMainOdds=()=>true;export const fetchLiveOdds=()=>{};export const fetchMatchAnalysis=()=>{};export async function fetchScheduleByDate(){globalThis.scanOrder.push('goaloo');return []}`,
+ '@/lib/goaloo.server':`export const setForcedKey=()=>{};export const hasMainOdds=()=>true;export const fetchLiveOdds=()=>{};export const fetchMatchAnalysis=()=>{};export async function fetchScheduleByDate(){globalThis.scanOrder.push('goaloo');return globalThis.testFixtures??[]}`,
  '@/lib/predictions.server':`export const gradePrediction=()=>{};export const predictCorners=()=>[];export const predictMatchOutcomes=()=>[];export const meetsConfidenceThreshold=()=>true;`,
  '@/lib/predictions.functions':`export async function lockDailyBestPickIfNeeded(){globalThis.scanOrder.push('select')}`,
  '@/lib/oddsapi.server':`export async function getOddsApiKeysStatus(){return {availableKeys:globalThis.noOddsKeys?0:1}};export async function runDualFreeScan(opts){globalThis.scanLimit=opts.maxMatches;globalThis.scanOrder.push('odds');if(globalThis.failOdds)throw new Error('fixture source unavailable');opts.onEvent('done',{matchesAnalyzed:5,predictionsGenerated:2});return {matchesAnalyzed:5,predictionsGenerated:2}}`,
@@ -40,3 +40,18 @@ const unavailable=await Route.server.handlers.GET({request:new Request('https://
 const final=(await unavailable.text()).trim().split('\n').map(JSON.parse).at(-1);
 assert.deepEqual(globalThis.scanOrder,['goaloo','select']);assert.deepEqual(final.completedSources,['Goaloo']);assert.deepEqual(final.failures,['Odds API unavailable']);
 console.log('Unavailable Odds API retains a completed Goaloo phase and still selects fixed daily picks.');
+
+const {handleAnalyzeStream}=await import('../src/lib/analyze-stream.server.ts');
+globalThis.testFixtures=Array.from({length:530},(_,i)=>({matchId:'goaloo:'+i,leagueName:'England Premier League',homeName:'Home '+i,awayName:'Away '+i,matchTime:Date.parse('2099-10-07T12:00:00Z')/1000,raw:{}}));
+let processedIds=[],analysed=0,batches=0;
+do {
+ globalThis.scanOrder=[];
+ const batchResponse=await handleAnalyzeStream(new Request('https://example.test/api/analyze-stream?date=2099-10-07&engine=combined&trustedOnly=false&maxMatches=500',{headers:{authorization:'Bearer test-admin-token-valid'}}),{processedIds,remaining:500-analysed});
+ const batch=(await batchResponse.text()).trim().split('\n').map(JSON.parse).at(-1);
+ assert.equal(batch.event,'done');analysed+=batch.matchesAnalyzed;processedIds.push(...batch.goalooBatch.processedIds);batches++;
+ assert.equal(new Set(processedIds).size,processedIds.length);
+ if(batch.goalooBatch.pending){assert(!globalThis.scanOrder.includes('select'));assert(!globalThis.scanOrder.includes('odds'));}else {assert(globalThis.scanOrder.includes('select'));break;}
+ assert(batches<20,'Batch scan did not finish');
+}while(true);
+assert.equal(analysed,500);assert.equal(processedIds.length,500);assert.equal(batches,9);
+console.log('Automatic scan reaches 500 matches across nine persisted batches without duplicates or early daily-pick selection.');

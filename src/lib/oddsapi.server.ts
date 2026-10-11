@@ -22,7 +22,7 @@ function isFresh(lastUpdate: string | undefined): boolean {
 }
 
 // ---- Multi-key rotation ----
-// Supports N rotating keys (2 today, expandable to 3+) instead of a single key. The Odds
+// Supports all configured rotating keys, including three or more. The Odds
 // API's free tier resets MONTHLY, not daily like iSportsAPI's trial — exhaustion tracking
 // here is month-keyed, not UTC-day-keyed. Detection uses the `x-requests-remaining`
 // response header The Odds API returns on every call (0 or missing-with-401 = exhausted)
@@ -34,7 +34,8 @@ function monthKey(d: Date): string {
 }
 
 async function getKeyEntries(): Promise<OddsKeyEntry[]> {
-  const { data } = await supabaseAdmin.from("engine_settings").select("odds_api_keys, odds_api_key").eq("id", true).maybeSingle();
+  const { data, error } = await supabaseAdmin.from("engine_settings").select("odds_api_keys, odds_api_key").eq("id", true).maybeSingle();
+  if (error) throw new Error("Could not read Odds API key settings.");
   let entries: OddsKeyEntry[] = Array.isArray(data?.odds_api_keys) ? data!.odds_api_keys as OddsKeyEntry[] : [];
   if (!entries.length && data?.odds_api_key) entries = [{ key: data.odds_api_key as string, exhausted_at: null }];
   if (!entries.length && process.env.ODDS_API_KEY) entries = [{ key: process.env.ODDS_API_KEY, exhausted_at: null }];
@@ -51,9 +52,8 @@ async function getKeyEntries(): Promise<OddsKeyEntry[]> {
 }
 
 async function markKeyExhausted(key: string): Promise<void> {
-  const entries = await getKeyEntries();
-  const updated = entries.map((e) => (e.key === key ? { ...e, exhausted_at: new Date().toISOString() } : e));
-  await supabaseAdmin.from("engine_settings").upsert({ id: true, odds_api_keys: updated, updated_at: new Date().toISOString() });
+  const {error}=await (supabaseAdmin as any).rpc("mark_edge_odds_key_exhausted",{p_key:key});
+  if(error) throw new Error("Could not record Odds API key status.");
 }
 
 /** Ordered list of currently-usable (non-exhausted) keys to try, in order. */
@@ -62,10 +62,13 @@ async function getAvailableKeys(): Promise<string[]> {
   return entries.filter((e) => !e.exhausted_at).map((e) => e.key);
 }
 
-export async function setOddsApiKeys(keys: string[]): Promise<void> {
-  const cleaned = keys.map((k) => k.trim()).filter(Boolean);
-  const entries: OddsKeyEntry[] = cleaned.map((key) => ({ key, exhausted_at: null }));
-  await supabaseAdmin.from("engine_settings").upsert({ id: true, odds_api_keys: entries, updated_at: new Date().toISOString() });
+export async function setOddsApiKeys(keys: string[], replace=false): Promise<void> {
+  const cleaned = [...new Set(keys.flatMap(k=>k.split(/[\s,;]+/)).map(k=>k.trim()).filter(Boolean))];
+  const prior = replace ? [] : await getKeyEntries();
+  const entries: OddsKeyEntry[] = [...prior, ...cleaned.filter(key=>!prior.some(e=>e.key===key)).map(key=>({key,exhausted_at:null}))];
+  if(entries.length>10) throw new Error("A maximum of 10 Odds API keys can be saved.");
+  const {error}=await supabaseAdmin.from("engine_settings").upsert({id:true,odds_api_keys:entries,updated_at:new Date().toISOString()});
+  if(error) throw new Error("Odds API keys could not be saved.");
 }
 
 export async function getOddsApiKeysStatus(): Promise<{ totalKeys: number; availableKeys: number; exhaustedKeys: number }> {
@@ -77,7 +80,7 @@ export async function getOddsApiKeysStatus(): Promise<{ totalKeys: number; avail
 /** Fetches a URL (with `{key}` substituted per attempt), rotating through available keys
  * on quota exhaustion. Rate-limit (429) retries the SAME key with backoff — switching keys
  * doesn't fix a rate limit, which is IP-scoped, not key-scoped. Quota exhaustion (detected
- * via the x-requests-remaining header, or a 401 with no remaining) rotates to the next key
+ * via the x-requests-remaining header or explicit OUT_OF_USAGE_CREDITS code) rotates to the next key
  * and marks the exhausted one so it's skipped for the rest of the calendar month. */
 async function fetchWithKeyRotation(buildUrl: (key: string) => string, label: string): Promise<{ res: Response; text: string }> {
   const keys = await getAvailableKeys();
@@ -89,26 +92,33 @@ async function fetchWithKeyRotation(buildUrl: (key: string) => string, label: st
     let attempt = 0;
     while (true) {
       await throttle();
-      const res = await fetch(buildUrl(key));
+      const res = await fetch(buildUrl(key),{signal:AbortSignal.timeout(18000)});
       const text = await res.text();
       const remaining = res.headers.get("x-requests-remaining");
-      const quotaExhausted = (remaining !== null && Number(remaining) <= 0) || (res.status === 401 && remaining === null);
-      if (quotaExhausted) {
-        console.warn(`[oddsapi] ${label} key exhausted (remaining=${remaining ?? "n/a"}, status=${res.status}) — rotating to next key.`);
-        await markKeyExhausted(key);
-        lastErr = `key exhausted`;
-        break; // try next key
-      }
       if (res.status === 429 && attempt < BACKOFFS_MS.length) {
         console.warn(`[oddsapi] ${label} rate-limited, retrying in ${BACKOFFS_MS[attempt]}ms (attempt ${attempt + 1}/${BACKOFFS_MS.length})`);
         await sleep(BACKOFFS_MS[attempt]);
         attempt++;
         continue;
       }
+      if(res.status===429) return {res,text};
+      let code: string | undefined;
+      try { code=JSON.parse(text)?.error_code; } catch {}
+      const zeroRemaining=remaining!==null && remaining.trim()!=="" && Number.isFinite(Number(remaining)) && Number(remaining)<=0;
+      // A successful response with zero credits remaining is still usable.
+      if(res.ok){if(zeroRemaining) await markKeyExhausted(key);return {res,text};}
+      const quotaExhausted=code==="OUT_OF_USAGE_CREDITS" || zeroRemaining;
+      if(res.status===401&&!quotaExhausted){lastErr="invalid key";break;}
+      if (quotaExhausted) {
+        console.warn(`[oddsapi] ${label} key exhausted (remaining=${remaining ?? "n/a"}, status=${res.status}) — rotating to next key.`);
+        await markKeyExhausted(key);
+        lastErr = `key exhausted`;
+        break; // try next key
+      }
       return { res, text }; // success or a non-quota/non-rate-limit failure — return as-is
     }
   }
-  throw new Error(`OddsAPI ${label}: all ${keys.length} key(s) exhausted for this month (${lastErr}).`);
+  throw new Error(`OddsAPI ${label}: no usable response from ${keys.length} configured key(s) (${lastErr}).`);
 }
 
 // Same preventive spacing added to isports.server.ts after real scan failures there —
@@ -172,6 +182,7 @@ export async function fetchOddsApiFixtures(
 ): Promise<OddsApiFixture[]> {
   const send = onEvent ?? (() => {});
   const out: OddsApiFixture[] = [];
+  let successfulLeagues=0;
   let i = 0;
   for (const sportKey of sportKeys) {
     i++;
@@ -185,6 +196,7 @@ export async function fetchOddsApiFixtures(
       // quota reasons — see the note below. h2h-only roughly halves the remaining cost
       // again (1 market × 1 region instead of 2 × 1 per league).
       events = await getEventsPayload(sportKey, "h2h");
+      successfulLeagues++;
     } catch (e: any) {
       console.warn(`[fetchOddsApiFixtures] ${sportKey} failed: ${e?.message ?? e}`);
       send("status", { message: `League ${sportKey} failed: ${e?.message ?? e} — skipping.` });
@@ -202,6 +214,7 @@ export async function fetchOddsApiFixtures(
       });
     }
   }
+  if(sportKeys.length && successfulLeagues===0) throw new Error("Odds API could not fetch any configured league. Check key validity, quota and source availability.");
   return out;
 }
 

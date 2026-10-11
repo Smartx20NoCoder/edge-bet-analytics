@@ -9,6 +9,7 @@ export const Route = createFileRoute("/api/cron/auto-scan")({ server: { handlers
   const now = new Date();
   const runId = crypto.randomUUID();
   let claimed = false;
+  let progress:any;
   try {
     const {data:settings,error} = await supabaseAdmin.from("engine_settings").select("scan_automation_enabled,scan_automation_config,scan_automation_last_run,scan_automation_status").eq("id",true).single();
     if (error) throw new Error(error.message);
@@ -16,9 +17,11 @@ export const Route = createFileRoute("/api/cron/auto-scan")({ server: { handlers
     const config = ScanConfig.parse(settings.scan_automation_config);
     const prior = settings.scan_automation_status;
     const day = watDay(now);
+    if(Number(new Date(now.getTime()+3600000).toISOString().slice(11,13))<10) return Response.json({ok:true,skipped:true,reason:"before_daily_scan_window"});
     if (prior?.day === day && ["complete", "partial"].includes(prior?.state)) return Response.json({ok:true,skipped:true,reason:"already_completed_today"});
     if (prior?.state === "running" && now.getTime()-Date.parse(settings.scan_automation_last_run)<15*60*1000) return Response.json({ok:true,skipped:true,reason:"already_running"});
-    let claim = supabaseAdmin.from("engine_settings").update({scan_automation_last_run:now.toISOString(),scan_automation_status:{day,runId,state:"running"}}).eq("id",true);
+    progress=prior?.day===day && prior?.progress ? prior.progress : {processedIds:[],matches:0,picks:0,skippedNoOdds:0,windowEnd:new Date(now.getTime()+Math.min(config.timeframeHours,(Date.parse(day+"T00:00:00+01:00")+86400000-now.getTime())/3600000)*3600000).toISOString()};
+    let claim = supabaseAdmin.from("engine_settings").update({scan_automation_last_run:now.toISOString(),scan_automation_status:{day,runId,state:"running",progress}}).eq("id",true);
     claim = settings.scan_automation_last_run ? claim.eq("scan_automation_last_run",settings.scan_automation_last_run) : claim.is("scan_automation_last_run",null);
     const {data:rows,error:claimError} = await claim.select("id");
     if (claimError) throw new Error(claimError.message);
@@ -27,7 +30,8 @@ export const Route = createFileRoute("/api/cron/auto-scan")({ server: { handlers
     // Run the same combined handler in-process: one duration budget, no public HTTP hop.
     const url = new URL("/api/analyze-stream",request.url);
     url.search = cronScanParams(config,now).toString();
-    const response = await handleAnalyzeStream(new Request(url,{headers:{authorization:request.headers.get("authorization")!}}));
+    if(progress.windowEnd) url.searchParams.set("timeframeHours",String(Math.max(0,(Date.parse(progress.windowEnd)-now.getTime())/3600000)));
+    const response = await handleAnalyzeStream(new Request(url,{headers:{authorization:request.headers.get("authorization")!}}), {processedIds:progress.processedIds,remaining:Math.max(0,config.maxMatches-progress.matches)});
     if (!response.ok) throw new Error(`Scan request failed (${response.status})`);
     const events = (await response.text()).split("\n").filter(Boolean).map(line=>JSON.parse(line));
     const done = events.find(e=>e.event === "done");
@@ -35,14 +39,16 @@ export const Route = createFileRoute("/api/cron/auto-scan")({ server: { handlers
     if (!done.completedSources?.length) throw new Error(`No scan source completed: ${(done.failures ?? []).join(", ") || "source unavailable"}`);
     const failures: string[] = done.failures ?? [];
     const warning = failures.length ? `${done.completedSources.join(" and ")} completed; ${failures.join(", ")}. Saved predictions and daily picks are retained.${failures.includes("Odds API unavailable") ? " Add a working Odds API key or renew its quota in Settings to scan that source." : " Check source availability before a manual retry."}` : undefined;
-    const status = {day,runId,state:failures.length ? "partial" : "complete",completedSources:done.completedSources,failures,warning,completedAt:new Date().toISOString(),matches:done.matchesAnalyzed,picks:done.predictionsGenerated};
+    const nextProgress={windowEnd:progress.windowEnd,processedIds:[...new Set([...progress.processedIds,...(done.goalooBatch?.processedIds??[])])],matches:progress.matches+(done.matchesAnalyzed??0),picks:progress.picks+(done.predictionsGenerated??0),skippedNoOdds:progress.skippedNoOdds+(done.goalooBatch?.skippedNoOdds??0)};
+    const pending=done.goalooBatch?.pending===true;
+    const status = {day,runId,state:pending ? "queued" : failures.length ? "partial" : "complete",completedSources:done.completedSources,failures,warning,completedAt:pending ? undefined : new Date().toISOString(),matches:nextProgress.matches,picks:nextProgress.picks,checkedFixtures:nextProgress.processedIds.length,skippedNoOdds:nextProgress.skippedNoOdds,progress:nextProgress};
     const {error:saveError} = await supabaseAdmin.from("engine_settings").update({scan_automation_status:status}).eq("id",true).eq("scan_automation_status->>runId",runId);
     if (saveError) throw new Error(saveError.message);
-    console.log("[cron:auto-scan] complete",status);
+    console.log("[cron:auto-scan] batch saved",{...status,progress:undefined});
     return Response.json({ok:true,job:"auto-scan",...status});
   } catch (error: any) {
     console.error("[cron:auto-scan] failed",error?.message);
-    if (claimed) await supabaseAdmin.from("engine_settings").update({scan_automation_status:{day:watDay(now),runId,state:"failed",error:String(error?.message??"Scan failed").slice(0,250)}}).eq("id",true).eq("scan_automation_status->>runId",runId);
+    if (claimed) await supabaseAdmin.from("engine_settings").update({scan_automation_status:{day:watDay(now),runId,state:"failed",progress,error:String(error?.message??"Scan failed").slice(0,250)}}).eq("id",true).eq("scan_automation_status->>runId",runId);
     return Response.json({ok:false,job:"auto-scan",error:error?.message??"Scan failed"},{status:500});
   }
 } } } });
