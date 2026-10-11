@@ -40,7 +40,7 @@ async function updateDelivery(row:Delivery,value:Record<string,unknown>){
  const {error}=await db.from('edge_telegram_deliveries').update(value).eq('chat_id',row.chat_id).eq('day',row.day);
  if(error)throw new Error('Telegram delivery could not be recorded.');
 }
-async function publishSingle(config:Settings,day:string,predictionId:string,archive=false,existingOnly=false){
+async function publishSingle(config:Settings,day:string,predictionId:string,archive=false,existingOnly=false,verifyExisting=false){
  let row=await getDelivery(config,day);
  if(existingOnly&&!row)return;
  const live=await getPrediction(row?.prediction_id??predictionId);
@@ -55,25 +55,28 @@ async function publishSingle(config:Settings,day:string,predictionId:string,arch
  }
  const now=new Date().toISOString();
  if(row.status==='sending'&&Date.parse(row.updated_at)<Date.now()-60000){await updateDelivery(row,{status:'uncertain',error:'Delivery was not confirmed. Check the channel before posting again.'});return;}
+ if((row as any).retry_at&&Date.parse((row as any).retry_at)>Date.now())return;
  if(row.status==='sending'||row.status==='uncertain'||row.status==='editing'&&Date.parse(row.updated_at)>=Date.now()-60000)return;
  if(!row.message_id&&!row.archived&&Date.parse(live.kickoff)<=Date.now()){await updateDelivery(row,{archived:true});row.archived=true;}
  const pick={...row.pick_snapshot,is_correct:live.is_correct,ft_status:live.ft_status,home_score:live.home_score,away_score:live.away_score};
  const text=edgeSingleText(day,pick,row.archived),hash=createHash('sha256').update(text).digest('hex');
- if(row.status==='sent'&&row.content_hash===hash)return;
+ if(row.status==='sent'&&row.content_hash===hash&&!verifyExisting)return;
  const edit=Boolean(row.message_id),state=edit?'editing':'sending';
  const {data:claimed,error:claimError}=await db.from('edge_telegram_deliveries').update({status:state,updated_at:now,error:null}).eq('chat_id',row.chat_id).eq('day',day).eq('status',row.status).eq('updated_at',row.updated_at).select('day');
  if(claimError)throw new Error('Could not claim the Telegram delivery.');if(!claimed?.length)return;
  try{
   const sent=await telegramApi(edit?'editMessageText':'sendMessage',{chat_id:row.chat_id,...(edit?{message_id:row.message_id}:{}),text,link_preview_options:{is_disabled:true}});
-  await updateDelivery(row,{status:'sent',message_id:edit?row.message_id:sent.message_id,content_hash:hash,updated_at:new Date().toISOString(),error:null});
+  await updateDelivery(row,{status:'sent',message_id:edit?row.message_id:sent.message_id,content_hash:hash,retry_at:null,updated_at:new Date().toISOString(),error:null});
  }catch(error){
-  if(error instanceof TelegramError&&error.unchanged){await updateDelivery(row,{status:'sent',content_hash:hash,updated_at:new Date().toISOString(),error:null});return;}
+  if(error instanceof TelegramError&&error.unchanged){await updateDelivery(row,{status:'sent',content_hash:hash,retry_at:null,updated_at:new Date().toISOString(),error:null});return;}
+  if(edit&&error instanceof TelegramError&&error.missing){await updateDelivery(row,{status:'queued',message_id:null,content_hash:null,error:'Deleted channel post will be republished in date order.',updated_at:new Date().toISOString()});return;}
   const uncertain=!edit&&(!(error instanceof TelegramError)||error.uncertain);
-  await updateDelivery(row,{status:uncertain?'uncertain':'failed',error:error instanceof TelegramError?error.message:'Telegram delivery was not confirmed. Check the channel.',updated_at:new Date().toISOString()});
+  await updateDelivery(row,{status:uncertain?'uncertain':'failed',retry_at:error instanceof TelegramError&&error.retryAfter?new Date(Date.now()+error.retryAfter*1000+1000).toISOString():null,error:error instanceof TelegramError?error.message:'Telegram delivery was not confirmed. Check the channel.',updated_at:new Date().toISOString()});
  }
 }
 export async function publishEdgeSingles(){
  const config=await settings();if(!config.enabled||!config.chat_id||!telegramConfigured())return;
+ const {data:archive}=await db.from('edge_telegram_archives').select('state').eq('chat_id',config.chat_id).maybeSingle();if(archive&&archive.state!=='complete')return;
  const from=new Date(Date.now()-86400000).toISOString().slice(0,10),until=new Date(Date.now()+7*86400000).toISOString().slice(0,10);
  const {data,error}=await db.from('daily_best_picks').select('day,single_prediction_id').gte('day',from).lte('day',until).order('day').limit(10);
  if(error)throw new Error('Daily singles could not be read.');
@@ -86,15 +89,17 @@ export async function publishEdgeSinglesSafely(){try{await publishEdgeSingles();
 export async function syncEdgeTelegramResults(predictionIds?:string[]){
  if(predictionIds?.length===0)return;
  const config=await settings();if(!config.enabled||!config.chat_id||!telegramConfigured())return;
+ const {data:archive}=await db.from('edge_telegram_archives').select('state').eq('chat_id',config.chat_id).maybeSingle();if(archive&&archive.state!=='complete')return;
  const {data,error}=await db.from('edge_telegram_deliveries').select('day,prediction_id,status').eq('chat_id',config.chat_id).not('message_id','is',null).order('day',{ascending:false}).limit(100);
  if(error)throw new Error('Posted singles could not be read.');
  for(const row of data??[])if(!predictionIds||predictionIds.includes(row.prediction_id)||row.status==='failed'||row.status==='editing')await publishSingle(config,row.day,row.prediction_id,false,true);
 }
 export async function syncEdgeTelegramResultsSafely(predictionIds?:string[]){try{await syncEdgeTelegramResults(predictionIds);}catch{console.warn('[telegram] Result sync unavailable; saved results are preserved.');}}
-export async function publishEdgeSingleArchive(after?:string){
+export async function publishArchiveDay(day:string,predictionId:string){
  const config=await settings();if(!config.enabled||!config.chat_id||!telegramConfigured())throw new Error('Connect and enable your channel first.');
- const {data,error}=await db.from('daily_best_picks').select('day,single_prediction_id').not('single_prediction_id','is',null).gt('day',after??'0001-01-01').lte('day',new Date().toISOString().slice(0,10)).order('day').limit(6);
- if(error)throw new Error('Saved daily singles could not be read.');
- const batch=(data??[]).slice(0,5);for(const lock of batch)await publishSingle(config,lock.day,lock.single_prediction_id,true);
- return {processed:batch.length,next:(data??[]).length>5?batch.at(-1)?.day:null,...await edgeTelegramStatus()};
+ await publishSingle(config,day,predictionId,true,false,true);
+ return getDelivery(config,day);
+}
+export async function publishEdgeSingleArchive(){
+ const {startTelegramArchive}=await import('./telegram-archive.server');return startTelegramArchive();
 }

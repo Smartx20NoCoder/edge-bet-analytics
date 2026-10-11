@@ -6,6 +6,11 @@ import { handleAnalyzeStream } from "@/lib/analyze-stream.server";
 
 export const Route = createFileRoute("/api/cron/auto-scan")({ server: { handlers: { GET: async ({request}) => {
   if (!isCronAuthorized(request)) return Response.json({error:"Unauthorized"},{status:401});
+  if(new URL(request.url).searchParams.get('job')==='telegram-history'){
+    const {runTelegramArchiveBatch}=await import('@/lib/telegram-archive.server');
+    try{return Response.json({ok:true,job:'telegram-history',...await runTelegramArchiveBatch()});}
+    catch{return Response.json({ok:false,error:'History queue unavailable. It will retry automatically.'},{status:500});}
+  }
   const now = new Date();
   const runId = crypto.randomUUID();
   let claimed = false;

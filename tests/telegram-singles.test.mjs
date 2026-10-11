@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {registerHooks} from 'node:module';
-const tables={edge_telegram_settings:[],edge_telegram_deliveries:[],predictions:[],daily_best_picks:[]};
+const tables={edge_telegram_archives:[],edge_telegram_settings:[],edge_telegram_deliveries:[],predictions:[],daily_best_picks:[]};
 class Query{
  constructor(table){this.table=table;this.filters=[];this.mode='read';}
  select(){return this}eq(k,v){this.filters.push(r=>r[k]===v);return this}gte(k,v){this.filters.push(r=>r[k]>=v);return this}lte(k,v){this.filters.push(r=>r[k]<=v);return this}gt(k,v){this.filters.push(r=>r[k]>v);return this}in(k,v){this.filters.push(r=>v.includes(r[k]));return this}not(k,op,v){this.filters.push(r=>v===null?r[k]!=null:r[k]!==v);return this}
@@ -45,7 +45,7 @@ try{
  pick.is_correct=false;await store.syncEdgeTelegramResults();assert(calls.at(-1).body.text.includes('🔴 ✕ UNSUCCESSFUL'));
  pick.ft_status='AWARDED';pick.is_correct=true;await store.syncEdgeTelegramResults();assert(calls.at(-1).body.text.includes('⚪ AWARDED · NOT GRADED'));assert(!calls.at(-1).body.text.includes('FT:'));
  const prior=new Date(now-86400000).toISOString().slice(0,10),old={...pick,id:'old-single',kickoff:new Date(now-20*3600000).toISOString(),ft_status:-1,is_correct:false};tables.predictions.push(old);tables.daily_best_picks.push({day:prior,single_prediction_id:old.id});const oldSends=calls.filter(c=>c.method==='sendMessage').length;await store.publishEdgeSingles();assert.equal(calls.filter(c=>c.method==='sendMessage').length,oldSends);
- await store.publishEdgeSingleArchive();assert(calls.some(c=>c.method==='sendMessage'&&c.body.text.includes('ARCHIVE')));
+ await store.publishArchiveDay(prior,old.id);assert(calls.some(c=>c.method==='sendMessage'&&c.body.text.includes('ARCHIVE')));
  const futureDay=new Date(now+86400000).toISOString().slice(0,10);tables.predictions.push({...pick,id:'retry-single',kickoff:new Date(now+86400000).toISOString(),is_correct:null,ft_status:0});tables.daily_best_picks.push({day:futureDay,single_prediction_id:'retry-single'});
  sendFailure='rejected';await store.publishEdgeSingles();assert.equal(tables.edge_telegram_deliveries.find(r=>r.day===futureDay).status,'failed');sendFailure=null;await store.publishEdgeSingles();assert.equal(tables.edge_telegram_deliveries.find(r=>r.day===futureDay).status,'sent');
  const uncertainDay=new Date(now+2*86400000).toISOString().slice(0,10);tables.predictions.push({...pick,id:'uncertain-single',kickoff:new Date(now+2*86400000).toISOString(),is_correct:null,ft_status:0});tables.daily_best_picks.push({day:uncertainDay,single_prediction_id:'uncertain-single'});
@@ -54,3 +54,5 @@ try{
  assert(edgeSingleText(day,{...pick,ft_status:'VOID',is_correct:true}).includes('⚪ VOID / REFUND'));
  console.log('Edgebet Telegram: admin guards, private-channel permissions, singles-only posts, concurrent deduplication, fixed selection/odds snapshots, coloured result edits, void/awarded handling, archive exclusion, retry safety and pause passed.');
 }finally{globalThis.fetch=originalFetch;delete globalThis.mockDB;}
+
+export {tables};

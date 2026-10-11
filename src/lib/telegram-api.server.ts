@@ -1,6 +1,6 @@
 // Server-only callers. Never return or log the bot token or a Telegram request URL.
 export class TelegramError extends Error {
- constructor(message:string,readonly uncertain=false,readonly unchanged=false){super(message);}
+ constructor(message:string,readonly uncertain=false,readonly unchanged=false,readonly retryAfter=0,readonly missing=false){super(message);}
 }
 export function telegramConfigured(){return Boolean(process.env.TELEGRAM_BOT_TOKEN?.trim());}
 export async function telegramApi<T=any>(method:string,body:Record<string,unknown>={}):Promise<T>{
@@ -12,7 +12,7 @@ export async function telegramApi<T=any>(method:string,body:Record<string,unknow
  if(!data?.ok){
   const unchanged=method==='editMessageText'&&typeof data?.description==='string'&&data.description.includes('message is not modified');
   const messages:Record<number,string>={401:'The Telegram bot token is invalid. Update it in Vercel and redeploy.',403:'The bot cannot access this channel. Check its administrator permissions.',409:'This bot has another active connection. Use a dedicated bot, or enter the channel ID manually.',429:'Telegram is limiting requests. Try again later.'};
-  throw new TelegramError(unchanged?'Post already up to date.':messages[data?.error_code]??'Telegram rejected the request. Check the channel ID and bot permissions.',false,unchanged);
+  throw new TelegramError(unchanged?'Post already up to date.':messages[data?.error_code]??'Telegram rejected the request. Check the channel ID and bot permissions.',false,unchanged,Number(data?.parameters?.retry_after)||0,method==='editMessageText'&&typeof data?.description==='string'&&data.description.includes('message to edit not found'));
  }
  return data.result as T;
 }
