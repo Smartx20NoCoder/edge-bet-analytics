@@ -25,17 +25,6 @@ export const Route = createFileRoute("/history")({
   component: HistoryPage,
 });
 
-const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-function formatScanLabel(iso: string): string {
-  const d = new Date(iso);
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mon = MONTHS[d.getMonth()];
-  const yyyy = d.getFullYear();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${dd} ${mon} ${yyyy} · ${hh}:${mm}`;
-}
-
 function DataEngineBadge({ engine }: { engine?: "isports" | "goaloo" | "dual_free" | null }) {
   if (!engine) return null;
   const isIsports = engine !== "dual_free";
@@ -115,8 +104,8 @@ function HistoryPage() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [evFilter, setEvFilter] = useState("all");
   const aQ = useQuery({
-    queryKey: ["analyses", page, pageSize, fromDate, toDate, typeFilter, evFilter],
-    queryFn: () => fa({ data: { page, pageSize, fromDate: fromDate || undefined, toDate: toDate || undefined, typeFilter: typeFilter as any, evFilter: evFilter as any } }),
+    queryKey: ["analyses", "daily", page, pageSize, fromDate, toDate, typeFilter, evFilter],
+    queryFn: () => fa({ data: { page, pageSize, groupByDay: true, fromDate: fromDate || undefined, toDate: toDate || undefined, typeFilter: typeFilter as any, evFilter: evFilter as any } }),
   });
 
   const pickMonth = (label: string) => {
@@ -142,6 +131,7 @@ function HistoryPage() {
       if (r.updated === 0) toast.warning(msg);
       else toast.success(msg);
       qc.invalidateQueries({ queryKey: ["preds"] });
+      qc.invalidateQueries({ queryKey: ["analyses"] });
     },
     onError: (e: any) => toast.error(e?.message ?? "Update failed"),
   });
@@ -160,7 +150,7 @@ function HistoryPage() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-3xl font-bold">Analysis <span className="text-neon">History</span></h1>
-          <p className="text-sm text-muted-foreground mt-1">Persistent record of every scan. Update FT results without re-running predictions.</p>
+          <p className="text-sm text-muted-foreground mt-1">Daily history by source · West African time. Expand a day to view all saved batches together.</p>
         </div>
         {isAdmin && <Button onClick={() => updateMut.mutate()} disabled={updateMut.isPending}>
           {updateMut.isPending ? <Loader2 className="animate-spin h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}
@@ -232,7 +222,8 @@ function HistoryPage() {
 
       <div className="mt-6 space-y-2">
         {aQ.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
-        {!aQ.isLoading && list.length === 0 && (
+        {aQ.error && <p role="alert" className="text-sm text-destructive">Unable to load history. Please try again.</p>}
+        {!aQ.isLoading && !aQ.error && list.length === 0 && (
           <div className="glass rounded-xl p-10 text-center text-sm text-muted-foreground">No analyses yet.</div>
         )}
         {list.map((a: any) => (
@@ -251,7 +242,7 @@ function HistoryPage() {
       {totalCount > 0 && (
         <div className="mt-6 flex items-center justify-between gap-3 flex-wrap">
           <span className="text-xs text-muted-foreground">
-            Page {page} of {totalPages} · {totalCount} scan{totalCount === 1 ? "" : "s"} total
+            Page {page} of {totalPages} · {totalCount} daily source group{totalCount === 1 ? "" : "s"} total
           </span>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
@@ -273,8 +264,8 @@ function HistoryItem({ a, open, onToggle, fp, typeFilter, evFilter }: any) {
   const mark=useServerFn(markPredictionAwarded);
   const markMut=useMutation({mutationFn:async(predictionId:string)=>mark({data:{predictionId,accessToken:await adminAccessToken()}}),onSuccess:()=>{toast.success('Marked awarded · void at 1.00. Affected slips recalculated.');void qc.invalidateQueries();},onError:(e:Error)=>toast.error(e.message)});
   const q = useQuery({
-    queryKey: ["preds", "analysis", a.id],
-    queryFn: () => fp({ data: { analysisId: a.id } }),
+    queryKey: ["preds", "day", a.id, a.analysis_ids],
+    queryFn: () => fp({ data: { analysisIds: a.analysis_ids } }),
     enabled: open,
   });
   const allPreds = (q.data?.predictions ?? []) as Prediction[];
@@ -284,13 +275,13 @@ function HistoryItem({ a, open, onToggle, fp, typeFilter, evFilter }: any) {
   const filterActive = typeFilter !== "all" || evFilter !== "all";
   return (
     <div className="glass rounded-xl">
-      <button onClick={onToggle} className="w-full flex items-center gap-3 p-4 text-left">
+      <button onClick={onToggle} aria-expanded={open} className="w-full flex flex-wrap items-center gap-3 p-3 sm:p-4 text-left">
         {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         <div className="flex-1 min-w-0">
-          <div className="font-semibold">{formatScanLabel(a.created_at)}</div>
-          <div className="text-xs text-muted-foreground">{a.predictions_generated} pick{a.predictions_generated === 1 ? "" : "s"} · {a.matches_analyzed} match{a.matches_analyzed === 1 ? "" : "es"} analysed</div>
+          <div className="font-semibold">{new Date(`${a.day}T12:00:00+01:00`).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Africa/Lagos" })}</div>
+          <div className="text-xs text-muted-foreground">{a.predictions_generated} pick{a.predictions_generated === 1 ? "" : "s"} · {a.matches_analyzed} match{a.matches_analyzed === 1 ? "" : "es"} analysed · {a.batch_count} saved batch{a.batch_count === 1 ? "" : "es"}</div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Always visible, regardless of any active filter — this is the count that was
               previously invisible unless the Positive EV filter button was already
               selected (matching_count below still exists for that filtered-view case). */}
@@ -321,7 +312,7 @@ function HistoryItem({ a, open, onToggle, fp, typeFilter, evFilter }: any) {
       {open && (
         <div className="border-t border-border p-4 space-y-4">
           <div className="text-xs text-muted-foreground">{preds.length} picks shown</div>
-          {q.isLoading ? <p className="text-sm text-muted-foreground">Loading picks…</p> :
+          {q.error ? <p role="alert" className="text-sm text-destructive">Unable to load picks. Please try again.</p> : q.isLoading ? <p className="text-sm text-muted-foreground">Loading picks…</p> :
            preds.length === 0 ? <p className="text-sm text-muted-foreground">No picks for this filter.</p> :
            <div className="grid md:grid-cols-2 gap-4">{preds.map((p) => <PredictionCard key={p.id} p={p} marking={markMut.isPending} onMarkAwarded={isAdmin&&p.kickoff&&Date.parse(p.kickoff)<=Date.now()?()=>{if(confirm("Mark this match as awarded? All its predictions will be excluded from played-match grading."))markMut.mutate(p.id);}:undefined} />)}</div>}
         </div>

@@ -1,3 +1,4 @@
+import { groupHistoryDays } from "./history-groups";
 import {isVoidStatus,settleSlip} from './slip-settlement';
 import { selectDailyPair } from "./daily-pick-selection";
 import { matchSavedResult } from "./goaloo-analysis";
@@ -348,6 +349,7 @@ export const runAnalysis = createServerFn({ method: "POST" })
 export const getAnalyses = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => z.object({
     engine: z.enum(["corners", "match"]).optional(),
+    groupByDay: z.boolean().optional(),
     page: z.number().int().min(1).optional(),
     pageSize: z.union([z.literal(50), z.literal(100)]).optional(),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -363,11 +365,24 @@ export const getAnalyses = createServerFn({ method: "POST" })
     let query = supabaseAdmin
       .from("analyses")
       .select("*", { count: "exact" })
-      .order("created_at", { ascending: false });
-    if (data.fromDate) query = query.gte("created_at", `${data.fromDate}T00:00:00.000Z`);
-    if (data.toDate) query = query.lte("created_at", `${data.toDate}T23:59:59.999Z`);
-    const { data: rows, error, count } = await query.range(from, to);
-    if (error) throw new Error(error.message);
+      .order("created_at", { ascending: false }).order("id");
+    if (data.fromDate) query = query.gte("created_at", `${data.fromDate}T00:00:00.000${data.groupByDay ? "+01:00" : "Z"}`);
+    if (data.toDate) query = query.lte("created_at", `${data.toDate}T23:59:59.999${data.groupByDay ? "+01:00" : "Z"}`);
+    let rows: any[] = [];
+    let count = 0;
+    if (data.groupByDay) {
+      for (let offset = 0; ; offset += 1000) {
+        const result = await query.range(offset, offset + 999);
+        if (result.error) throw new Error(result.error.message);
+        rows.push(...(result.data ?? []));
+        if ((result.data ?? []).length < 1000) break;
+      }
+    } else {
+      const result = await query.range(from, to);
+      if (result.error) throw new Error(result.error.message);
+      rows = result.data ?? [];
+      count = result.count ?? 0;
+    }
     let analyses: any[] = (rows ?? []).map((a: any) => {
       let leagueScope: "major" | "all" | null = null;
       // Tags which engine produced this scan (isports / dual_free) so the UI can badge
@@ -387,12 +402,19 @@ export const getAnalyses = createServerFn({ method: "POST" })
     });
     const ids = analyses.map((a) => a.id);
     if (ids.length) {
-      let pq = supabaseAdmin
-        .from("predictions")
-        .select("analysis_id, confidence, is_correct, engine, prediction_type, expected_value")
-        .in("analysis_id", ids);
-      if (data.engine) pq = pq.eq("engine", data.engine);
-      const { data: preds } = await pq;
+      const preds: any[] = [];
+      for (let start = 0; start < ids.length; start += 100) {
+        for (let offset = 0; ; offset += 1000) {
+          let pq = supabaseAdmin.from("predictions")
+            .select("id, analysis_id, confidence, is_correct, engine, prediction_type, expected_value")
+            .in("analysis_id", ids.slice(start, start + 100)).order("id");
+          if (data.engine) pq = pq.eq("engine", data.engine);
+          const result = await pq.range(offset, offset + 999);
+          if (result.error) throw new Error(result.error.message);
+          preds.push(...(result.data ?? []));
+          if ((result.data ?? []).length < 1000) break;
+        }
+      }
       const counts: Record<string, { n: number; sum: number; won: number; lost: number; pending: number; matching: number; positiveEv: number }> = {};
       const typeFilter = data.typeFilter ?? "all";
       const evFilter = data.evFilter ?? "all";
@@ -450,6 +472,11 @@ export const getAnalyses = createServerFn({ method: "POST" })
         });
       }
     }
+    if (data.groupByDay) {
+      analyses = groupHistoryDays(analyses);
+      count = analyses.length;
+      analyses = analyses.slice(from, to + 1);
+    }
     const totalCount = count ?? 0;
     return { analyses, page, pageSize, totalCount, totalPages: Math.max(1, Math.ceil(totalCount / pageSize)) };
   });
@@ -459,10 +486,28 @@ export const getPredictions = createServerFn({ method: "POST" })
     z.object({
       engine: z.enum(["corners", "match"]).optional(),
       analysisId: z.string().optional(),
+      analysisIds: z.array(z.string().uuid()).min(1).max(10000).optional(),
       predictionType: z.string().optional(),
     }).parse(d ?? {})
   )
   .handler(async ({ data }) => {
+    if (data.analysisIds) {
+      const predictions: any[] = [];
+      for (let start = 0; start < data.analysisIds.length; start += 100) {
+        for (let offset = 0; ; offset += 1000) {
+          let q = supabaseAdmin.from("predictions").select("*")
+            .in("analysis_id", data.analysisIds.slice(start, start + 100)).order("id");
+          if (data.engine) q = q.eq("engine", data.engine);
+          if (data.predictionType) q = q.eq("prediction_type", data.predictionType);
+          const result = await q.range(offset, offset + 999);
+          if (result.error) throw new Error(result.error.message);
+          predictions.push(...(result.data ?? []));
+          if ((result.data ?? []).length < 1000) break;
+        }
+      }
+      predictions.sort((a, b) => Number(b.confidence) - Number(a.confidence));
+      return { predictions };
+    }
     let q = supabaseAdmin.from("predictions").select("*").order("confidence", { ascending: false }).limit(200);
     if (data.engine) q = q.eq("engine", data.engine);
     if (data.analysisId) q = q.eq("analysis_id", data.analysisId);
