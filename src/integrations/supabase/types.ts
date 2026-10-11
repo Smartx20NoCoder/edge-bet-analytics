@@ -168,6 +168,10 @@ export type Database = {
           id: boolean
           odds_api_key: string | null
           odds_api_keys: Json | null
+          scan_automation_config: Json
+          scan_automation_enabled: boolean
+          scan_automation_last_run: string | null
+          scan_automation_status: Json | null
           sport_keys: string[] | null
           updated_at: string
         }
@@ -176,6 +180,10 @@ export type Database = {
           id?: boolean
           odds_api_key?: string | null
           odds_api_keys?: Json | null
+          scan_automation_config?: Json
+          scan_automation_enabled?: boolean
+          scan_automation_last_run?: string | null
+          scan_automation_status?: Json | null
           sport_keys?: string[] | null
           updated_at?: string
         }
@@ -184,6 +192,10 @@ export type Database = {
           id?: boolean
           odds_api_key?: string | null
           odds_api_keys?: Json | null
+          scan_automation_config?: Json
+          scan_automation_enabled?: boolean
+          scan_automation_last_run?: string | null
+          scan_automation_status?: Json | null
           sport_keys?: string[] | null
           updated_at?: string
         }

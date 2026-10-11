@@ -330,6 +330,7 @@ function median(nums: number[]): number {
 }
 
 export type LiveOdds = {
+  coverage?: { oneXTwo: number; goals25: number };
   matchWinner?: { oH: number; oD: number; oA: number; bookmakers: number };
   goals25?: { oOver: number; oUnder: number; bookmakers: number };
   ahHomePlus?: { odds: number; bookmakers: number };

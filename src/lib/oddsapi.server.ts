@@ -1,5 +1,6 @@
 // Server-only The Odds API (v4) client. Never import from client code.
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { valuePickCounts } from './goaloo-odds-policy.ts';
 
 const BASE = "https://api.the-odds-api.com/v4";
 
@@ -82,7 +83,7 @@ export async function getOddsApiKeysStatus(): Promise<{ totalKeys: number; avail
  * doesn't fix a rate limit, which is IP-scoped, not key-scoped. Quota exhaustion (detected
  * via the x-requests-remaining header or explicit OUT_OF_USAGE_CREDITS code) rotates to the next key
  * and marks the exhausted one so it's skipped for the rest of the calendar month. */
-async function fetchWithKeyRotation(buildUrl: (key: string) => string, label: string): Promise<{ res: Response; text: string }> {
+async function fetchWithKeyRotation(buildUrl: (key: string) => string, label: string,deadline=Infinity): Promise<{ res: Response; text: string }> {
   const keys = await getAvailableKeys();
   if (!keys.length) throw new Error("No Odds API keys configured or all are exhausted for this month.");
 
@@ -91,6 +92,7 @@ async function fetchWithKeyRotation(buildUrl: (key: string) => string, label: st
   for (const key of keys) {
     let attempt = 0;
     while (true) {
+      if(Date.now()+20000>=deadline)throw new Error('Odds API request budget reached.');
       await throttle();
       const res = await fetch(buildUrl(key),{signal:AbortSignal.timeout(18000)});
       const text = await res.text();
@@ -141,7 +143,7 @@ export async function getSportKeys(): Promise<string[]> {
   return keys && keys.length ? keys : DEFAULT_SPORT_KEYS;
 }
 
-async function getEventsPayload(sportKey: string, markets: string): Promise<any[]> {
+async function getEventsPayload(sportKey: string, markets: string,deadline=Infinity): Promise<any[]> {
   const cacheKey = `__oddsapi_${sportKey}_${markets.replace(/,/g, "-")}`;
   const { data: cached } = await supabaseAdmin
     .from("analysis_cache")
@@ -154,6 +156,7 @@ async function getEventsPayload(sportKey: string, markets: string): Promise<any[
   const { res, text } = await fetchWithKeyRotation(
     (key) => `${BASE}/sports/${sportKey}/odds?apiKey=${key}&regions=eu&markets=${markets}&oddsFormat=decimal`,
     `/sports/${sportKey}/odds`,
+    deadline,
   );
   let json: any;
   try { json = JSON.parse(text); } catch {
@@ -179,12 +182,15 @@ export type OddsApiFixture = {
 export async function fetchOddsApiFixtures(
   sportKeys: string[],
   onEvent?: (evt: string, payload: any) => void,
-): Promise<OddsApiFixture[]> {
+  deadline=Infinity,
+): Promise<OddsApiFixture[] & {failedLeagues?:string[]}> {
   const send = onEvent ?? (() => {});
-  const out: OddsApiFixture[] = [];
+  const out: OddsApiFixture[] & {failedLeagues?:string[]} = [];
+  const failedLeagues:string[]=[];
   let successfulLeagues=0;
   let i = 0;
   for (const sportKey of sportKeys) {
+    if(Date.now()+20000>=deadline){failedLeagues.push(...sportKeys.slice(i));send('status',{message:'Odds API time budget reached; remaining leagues are reported as unavailable in this scan.'});break;}
     i++;
     send("status", { message: `Fetching fixtures+odds: league ${i}/${sportKeys.length} (${sportKey})…` });
     let events: any[];
@@ -195,9 +201,10 @@ export async function fetchOddsApiFixtures(
       // match rather than a full ladder of lines) and spreads was already excluded for
       // quota reasons — see the note below. h2h-only roughly halves the remaining cost
       // again (1 market × 1 region instead of 2 × 1 per league).
-      events = await getEventsPayload(sportKey, "h2h");
+      events = await getEventsPayload(sportKey, "h2h",deadline);
       successfulLeagues++;
     } catch (e: any) {
+      failedLeagues.push(sportKey);
       console.warn(`[fetchOddsApiFixtures] ${sportKey} failed: ${e?.message ?? e}`);
       send("status", { message: `League ${sportKey} failed: ${e?.message ?? e} — skipping.` });
       continue;
@@ -215,6 +222,7 @@ export async function fetchOddsApiFixtures(
     }
   }
   if(sportKeys.length && successfulLeagues===0) throw new Error("Odds API could not fetch any configured league. Check key validity, quota and source availability.");
+  out.failedLeagues=failedLeagues;
   return out;
 }
 
@@ -461,39 +469,44 @@ export async function runDualFreeScan(opts: {
   betType?: string;
   deferDailySelection?: boolean;
   onEvent?: (evt: string, payload: any) => void;
-}): Promise<{ analysisId: string | null; matchesAnalyzed: number; predictionsGenerated: number }> {
+}): Promise<{ analysisId: string | null; matchesAnalyzed: number; predictionsGenerated: number; positiveEvPicks?:number;dailyEligibleMatches?:number;failedLeagues?:string[] }> {
   const sportKeys = opts.sportKeys ?? (await getSportKeys());
   const send = opts.onEvent ?? (() => {});
   const minOdds = opts.minOdds ?? 1.5; // matches the isports engine's own default floor
   const maxOdds = opts.maxOdds ?? 100;
   send("status", { message: `Fetching fixtures+odds for ${sportKeys.length} leagues via The Odds API…` });
 
-  const fixtures = await fetchOddsApiFixtures(sportKeys, send);
+  const fixtures = await fetchOddsApiFixtures(sportKeys, send,Date.now()+180000);
   const now = Date.now();
   const selectedStart = opts.date ? new Date(`${opts.date}T00:00:00Z`).getTime() : now;
   const windowStart = Math.max(now, selectedStart);
   const windowEnd = windowStart + opts.timeframeHours * 3600 * 1000;
   const candidates = fixtures
     .filter((f) => f.matchTime * 1000 > windowStart && f.matchTime * 1000 <= windowEnd)
-    .sort((a, b) => a.matchTime - b.matchTime)
-    .slice(0, opts.maxMatches);
+    .sort((a, b) => a.matchTime - b.matchTime);
 
   send("status", { message: `${fixtures.length} total fixtures → ${candidates.length} within ${opts.timeframeHours}h window.` });
 
   let skippedExisting = 0;
-  let finalCandidates = candidates;
+  let finalCandidates = candidates.slice(0,opts.maxMatches);
   if (candidates.length) {
-    const ids = candidates.map((c) => c.matchId);
-    const { data: existing } = await supabaseAdmin.from("predictions").select("match_id").in("match_id", ids);
-    const existingSet = new Set((existing ?? []).map((r: any) => String(r.match_id)));
-    finalCandidates = candidates.filter((c) => !existingSet.has(c.matchId));
-    skippedExisting = candidates.length - finalCandidates.length;
+    const existingSet = new Set<string>();
+    // Paginate without a large IDs-in-URL filter or the default 1,000-row cap.
+    for(let offset=0;;offset+=1000){
+      const {data:existing,error}=await supabaseAdmin.from('predictions').select('match_id').gte('kickoff',new Date(windowStart).toISOString()).lte('kickoff',new Date(windowEnd).toISOString()).order('id').range(offset,offset+999);
+      if(error)throw new Error(`Existing Odds API predictions could not be checked: ${error.message}`);
+      for(const row of existing??[])existingSet.add(String(row.match_id));
+      if(!existing||existing.length<1000)break;
+    }
+    const fresh=candidates.filter((c) => !existingSet.has(c.matchId));
+    finalCandidates = fresh.slice(0,opts.maxMatches);
+    skippedExisting = candidates.length - fresh.length;
     if (skippedExisting) send("status", { message: `Skipping ${skippedExisting} already-predicted matches.` });
   }
 
   if (!finalCandidates.length) {
     send("error", { message: `No qualifying matches after filters. ${candidates.length ? "All were already predicted in earlier scans." : "Try widening the timeframe or check that Pinnacle-covered leagues are selected."}` });
-    return { analysisId: null, matchesAnalyzed: 0, predictionsGenerated: 0 };
+    return { analysisId: null, matchesAnalyzed: 0, predictionsGenerated: 0,failedLeagues:fixtures.failedLeagues };
   }
 
   const allPreds: any[] = [];
@@ -535,7 +548,7 @@ export async function runDualFreeScan(opts: {
 
   if (!allPreds.length) {
     send("done", { analysisId: null, matchesAnalyzed: finalCandidates.length, predictionsGenerated: 0 });
-    return { analysisId: null, matchesAnalyzed: finalCandidates.length, predictionsGenerated: 0 };
+    return { analysisId: null, matchesAnalyzed: finalCandidates.length, predictionsGenerated: 0,failedLeagues:fixtures.failedLeagues };
   }
 
   const avg = allPreds.reduce((s, p) => s + Number(p.confidence), 0) / allPreds.length;
@@ -548,7 +561,7 @@ export async function runDualFreeScan(opts: {
       predictions_generated: allPreds.length,
       avg_confidence: Math.round(avg * 100) / 100,
       status: "completed",
-      notes: JSON.stringify({ engine: "dual_free", sportKeys, skippedExisting }),
+      notes: JSON.stringify({ engine: "dual_free", sportKeys, skippedExisting,failedLeagues:fixtures.failedLeagues,...valuePickCounts(allPreds) }),
     })
     .select()
     .single();
@@ -561,7 +574,7 @@ export async function runDualFreeScan(opts: {
   if (!opts.deferDailySelection) await lockDailyBestPickIfNeeded();
 
   send("done", { analysisId: analysisRow.id, matchesAnalyzed: finalCandidates.length, predictionsGenerated: allPreds.length });
-  return { analysisId: analysisRow.id, matchesAnalyzed: finalCandidates.length, predictionsGenerated: allPreds.length };
+  return { analysisId: analysisRow.id, matchesAnalyzed: finalCandidates.length, predictionsGenerated: allPreds.length,...valuePickCounts(allPreds),failedLeagues:fixtures.failedLeagues };
 }
 
 /** Kept for backward compatibility with any existing caller — reports whether ANY key is

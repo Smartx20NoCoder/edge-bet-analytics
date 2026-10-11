@@ -14,6 +14,7 @@ export const ScanConfig = z.object({
   over25Floor: z.number().min(0).max(100).default(55),
 }).refine(c => c.maxOdds >= c.minOdds, "Maximum odds must be at least minimum odds");
 export const DEFAULT_SCAN_CONFIG = ScanConfig.parse({});
+export type ScanStatus = {state?:string;phase?:string;warning?:string;error?:string;matches?:number;picks?:number;checkedFixtures?:number;skippedNoOdds?:number;insufficientCoverage?:number;oddsRequestFailures?:number;analysisFailures?:number;positiveEvPicks?:number;dailyEligibleMatches?:number;poolRemaining?:number};
 export function watDay(now: Date) { return new Date(now.getTime() + 3600000).toISOString().slice(0, 10); }
 export function cronScanParams(config: z.infer<typeof ScanConfig>, now: Date) {
   const day = watDay(now);

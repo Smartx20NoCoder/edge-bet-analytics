@@ -8,11 +8,12 @@ export const getEngineSettings = createServerFn({ method: "POST" })
     await requireAdmin(data.accessToken);
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   const { getOddsApiKeysStatus, DEFAULT_SPORT_KEYS } = await import("./oddsapi.server");
-  const { data } = await supabaseAdmin.from("engine_settings").select("*").eq("id", true).maybeSingle();
+  const { data: settings, error } = await supabaseAdmin.from("engine_settings").select("*").eq("id", true).maybeSingle();
+  if(error)throw new Error('Engine settings could not be loaded.');
   const oddsKeysStatus = await getOddsApiKeysStatus();
   return {
-    dataEngine: (data?.data_engine as "isports" | "dual_free") ?? "isports",
-    sportKeys: (data?.sport_keys as string[] | null) ?? DEFAULT_SPORT_KEYS,
+    dataEngine: (settings?.data_engine as "isports" | "dual_free") ?? "isports",
+    sportKeys: (settings?.sport_keys as string[] | null) ?? DEFAULT_SPORT_KEYS,
     oddsApiTotalKeys: oddsKeysStatus.totalKeys,
     oddsApiAvailableKeys: oddsKeysStatus.availableKeys,
     oddsApiExhaustedKeys: oddsKeysStatus.exhaustedKeys,

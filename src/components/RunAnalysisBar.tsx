@@ -61,7 +61,7 @@ export function RunAnalysisBar() {
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
-  const [summary, setSummary] = useState<{ matches: number; picks: number } | null>(null);
+  const [summary, setSummary] = useState<{ matches: number; picks: number; positiveEvPicks?:number } | null>(null);
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const qc = useQueryClient();
@@ -119,25 +119,43 @@ export function RunAnalysisBar() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await fetch(`/api/analyze-stream?${params}`, { signal: ctrl.signal, headers: { Authorization: `Bearer ${await adminAccessToken()}` } });
-      if (!res.ok) throw new Error("Administrator access required or scan request failed");
-      if (!res.body) throw new Error("No stream body");
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const evt = JSON.parse(line);
-            handleEvent(evt);
-          } catch {}
+      const authorization=`Bearer ${await adminAccessToken()}`;
+      let cursor={processedIds:[] as string[],remaining:maxMatches,retryCounts:{} as Record<string,number>,phase:'goaloo' as 'goaloo'|'odds'};
+      let totals={matchesAnalyzed:0,predictionsGenerated:0,positiveEvPicks:0,dailyEligibleMatches:0};
+      const selectedStart=Date.parse(date+'T00:00:00Z');
+      const windowEnd=Math.max(Date.now(),selectedStart)+timeframeHours*3600000;
+      let more=true;
+      while(more){
+        params.set('timeframeHours',String(Math.max(0,(windowEnd-Math.max(Date.now(),selectedStart))/3600000)));
+        let batchDone:any;
+        const res = await fetch(`/api/analyze-stream?${params}`, { method:'POST',body:JSON.stringify(cursor),signal: ctrl.signal, headers: { Authorization: authorization,'Content-Type':'application/json' } });
+        if (!res.ok) throw new Error("Administrator access required or scan request failed");
+        if (!res.body) throw new Error("No stream body");
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const evt = JSON.parse(line);
+              if(evt.event==='done'){
+                batchDone=evt;
+                totals={matchesAnalyzed:totals.matchesAnalyzed+(evt.matchesAnalyzed??0),predictionsGenerated:totals.predictionsGenerated+(evt.predictionsGenerated??0),positiveEvPicks:totals.positiveEvPicks+(evt.positiveEvPicks??0),dailyEligibleMatches:totals.dailyEligibleMatches+(evt.dailyEligibleMatches??0)};
+                handleEvent({...evt,...totals});
+              }else handleEvent(evt);
+            } catch {}
+          }
         }
+        if(!batchDone)throw new Error('Scan ended before its progress was confirmed. Saved predictions remain available.');
+        more=batchDone.goalooBatch?.pending===true||batchDone.oddsApiPending===true;
+        cursor={processedIds:[...new Set([...cursor.processedIds,...(batchDone.goalooBatch?.processedIds??[])])],remaining:Math.max(0,cursor.remaining-(batchDone.goalooBatch?.matchesAnalyzed??0)),retryCounts:batchDone.goalooBatch?.retryCounts??{},phase:batchDone.oddsApiPending?'odds':'goaloo'};
+        if(ctrl.signal.aborted)throw new DOMException('Scan cancelled','AbortError');
       }
     } catch (e: any) {
       if (e?.name !== "AbortError") {
@@ -179,12 +197,13 @@ export function RunAnalysisBar() {
         });
         break;
       case "done":
-        setSummary({ matches: evt.matchesAnalyzed, picks: evt.predictionsGenerated });
+        setSummary({ matches: evt.matchesAnalyzed, picks: evt.predictionsGenerated,positiveEvPicks:evt.positiveEvPicks });
         append({
           kind: "done",
-          text: `${evt.failures?.length ? "Scan finished with source warnings" : "Scan complete"} — ${evt.predictionsGenerated} picks from ${evt.matchesAnalyzed} matches.`,
+          text: `${evt.goalooBatch?.pending||evt.oddsApiPending ? 'Scan continuing' : evt.failures?.length ? "Scan finished with source warnings" : "Scan complete"} — ${evt.predictionsGenerated} predictions from ${evt.matchesAnalyzed} matches · ${evt.positiveEvPicks??0} positive EV · ${evt.dailyEligibleMatches??0} daily-eligible candidates.`,
           at: Date.now(),
         });
+        if(evt.goalooBatch?.pending||evt.oddsApiPending)break;
         if (evt.failures?.length) toast.warning(`Scan finished with warnings: ${evt.failures.join(", ")}`);
         else toast.success(`Scan complete — ${evt.predictionsGenerated} picks from ${evt.matchesAnalyzed} matches`);
         break;
@@ -321,8 +340,10 @@ export function RunAnalysisBar() {
         <p className="text-xs text-muted-foreground">10 a.m. WAT daily (09:00 UTC). On Vercel's free plan, it may start between 10 and 11 a.m. Uses the saved settings above, both sources, and upcoming fixtures through midnight WAT. Automatic scans resume in batches until the saved limit or the eligible fixture list is reached. Manual scans remain available.</p>
         <p className="text-xs text-muted-foreground">Saved schedule: {autoQ.data?.enabled ? "On" : "Off"}{autoQ.data?.status?.state ? ` · Last run: ${autoQ.data.status.state === "partial" ? "completed with source warning" : autoQ.data.status.state === "queued" ? "continuing automatically in batches" : autoQ.data.status.state}` : " · First run pending"}{autoQ.data?.lastRun ? ` · ${new Date(autoQ.data.lastRun).toLocaleString("en-GB",{timeZone:"Africa/Lagos"})} WAT` : ""}</p>
         {autoQ.data?.status?.warning && <p className="text-xs text-foreground">{autoQ.data.status.warning}</p>}
-        {autoQ.data?.status?.matches != null && <p className="text-xs text-muted-foreground">{autoQ.data.status.matches} matches analysed · {autoQ.data.status.picks ?? 0} predictions saved</p>}
-        {autoQ.data?.status?.checkedFixtures != null && <p className="text-xs text-muted-foreground">{autoQ.data.status.checkedFixtures} fixtures checked · {autoQ.data.status.skippedNoOdds ?? 0} without usable odds · maximum {autoQ.data.config.maxMatches} analysed per source</p>}
+        {autoQ.data?.status?.matches != null && <p className="text-xs text-muted-foreground">{autoQ.data.status.matches} matches analysed · {autoQ.data.status.picks ?? 0} predictions saved{autoQ.data.status.positiveEvPicks!=null&&` · ${autoQ.data.status.positiveEvPicks} positive EV · ${autoQ.data.status.dailyEligibleMatches??0} daily-eligible candidates`}</p>}
+        {autoQ.data?.status?.checkedFixtures != null && <p className="text-xs text-muted-foreground">{autoQ.data.status.checkedFixtures} fixtures processed · {autoQ.data.status.skippedNoOdds ?? 0} missing requested markets · {autoQ.data.status.insufficientCoverage ?? 0} with fewer than two bookmakers · maximum {autoQ.data.config.maxMatches} analysed per source</p>}
+        {((autoQ.data?.status?.oddsRequestFailures??0)>0||(autoQ.data?.status?.analysisFailures??0)>0)&&<p className="text-xs text-foreground">Collection warnings: {autoQ.data?.status?.oddsRequestFailures??0} odds checks · {autoQ.data?.status?.analysisFailures??0} analysis checks. Failed requests are retried separately from missing markets.</p>}
+        {autoQ.data?.status?.state==='queued'&&<p className="text-xs text-muted-foreground">{autoQ.data.status.phase==='odds'?'Goaloo finished; the Odds API phase is pending.':`${autoQ.data.status.poolRemaining??0} fixtures remain in the current pool.`} Daily picks wait until scanning finishes.</p>}
         {autoQ.data?.status?.error && <p className="text-xs text-destructive">{autoQ.data.status.error}</p>}
         {autoQ.isError && <p className="text-xs text-destructive">Unable to load daily scan preferences. Try signing in again.</p>}
       </div>
@@ -366,7 +387,7 @@ export function RunAnalysisBar() {
 
           <div className="flex items-center justify-between pt-2">
             <div className="text-xs text-muted-foreground">
-              {summary ? `${summary.picks} qualifying picks · ${summary.matches} matches scanned` : running ? "Streaming live updates…" : ""}
+              {summary ? `${summary.picks} predictions · ${summary.positiveEvPicks??0} positive EV · ${summary.matches} matches analysed` : running ? "Streaming live updates…" : ""}
             </div>
             <div className="flex gap-2">
               {running ? (

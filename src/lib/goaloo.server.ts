@@ -4,6 +4,7 @@ import {awardedMatchNotice,verifiedGoalooStatus,goalooVoidStatus} from './goaloo
 import {matchSavedResult} from './goaloo-analysis';
 import { parseGoalooAnalysis } from './goaloo-analysis';
 import { collectGoalooOdds } from './goaloo-odds';
+import { goalooLiveOdds } from './goaloo-odds-policy.ts';
 import type { ScheduleMatch, LiveOdds, ResultRow } from './isports.server';
 
 async function cached<T>(key: string, seconds: number, fetcher: ()=>Promise<T>, refresh=false): Promise<T> {
@@ -41,19 +42,11 @@ export async function fetchMatchAnalysis(matchId: string, refresh=false) {
   if (Date.parse(result.kickoff)<=Date.now()) throw new Error('Match has already started.');
   return result;
 }
-const median=(values:number[])=>{const a=[...values].sort((x,y)=>x-y),m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2;};
 export async function fetchLiveOdds(matchId: string): Promise<LiveOdds> {
   const id=idOf(matchId);
-  return cached(`__goaloo_odds_${id}`,300,async()=>{
+  return cached(`__goaloo_odds_v2_${id}`,300,async()=>{
     const {quotes}=await collectGoalooOdds(id);
-    const values=(market:string)=>quotes.filter(q=>q.market===market).map(q=>q.odds);
-    const result:LiveOdds={};
-    const h=values('home'),d=values('draw'),a=values('away');
-    if(h.length>=2&&d.length>=2&&a.length>=2) result.matchWinner={oH:median(h),oD:median(d),oA:median(a),bookmakers:Math.min(h.length,d.length,a.length)};
-    const over=values('total-over-2.5'),under=values('total-under-2.5');
-    if(over.length>=2&&under.length>=2) result.goals25={oOver:median(over),oUnder:median(under),bookmakers:Math.min(over.length,under.length)};
-    for(const [market,key] of [['ah:home:0.5','ahHomePlus'],['ah:away:0.5','ahAwayPlus']] as const){const v=values(market);if(v.length>=2)result[key]={odds:median(v),bookmakers:v.length};}
-    return result;
+    return goalooLiveOdds(quotes);
   });
 }
 export async function hasMainOdds(id: string) {

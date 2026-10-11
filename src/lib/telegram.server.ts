@@ -6,7 +6,7 @@ import {edgeSingleText,type TelegramSingle} from './telegram-single-format';
 const db=supabaseAdmin as any;
 const PREDICTION_FIELDS='id,home_team,away_team,league_name,kickoff,prediction_type,selection,market_odds,confidence,expected_value,is_correct,ft_status,home_score,away_score';
 type Settings={enabled:boolean,chat_id:string|null,title:string|null,bot_username:string|null};
-type Delivery={chat_id:string,day:string,prediction_id:string,pick_snapshot:TelegramSingle,status:string,message_id:number|null,content_hash:string|null,updated_at:string,archived:boolean};
+type Delivery={chat_id:string,day:string,prediction_id:string,pick_snapshot:TelegramSingle,status:string,message_id:number|null,content_hash:string|null,updated_at:string,archived:boolean,error?:string|null,retry_at?:string|null};
 async function settings():Promise<Settings>{
  const {data,error}=await db.from('edge_telegram_settings').select('enabled,chat_id,title,bot_username').eq('id',true).maybeSingle();
  if(error)throw new Error('Telegram settings are temporarily unavailable.');
