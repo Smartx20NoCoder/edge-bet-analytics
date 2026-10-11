@@ -319,7 +319,9 @@ export function RunAnalysisBar() {
           <Button variant="outline" onClick={saveAuto} disabled={savingAuto || autoQ.isLoading || autoQ.isError}>{savingAuto ? "Saving…" : "Save daily scan settings"}</Button>
         </div>
         <p className="text-xs text-muted-foreground">10 a.m. WAT daily (09:00 UTC). On Vercel's free plan, it may start between 10 and 11 a.m. Uses the saved settings above, both sources, and upcoming fixtures through midnight WAT. Manual scans remain available.</p>
-        <p className="text-xs text-muted-foreground">Saved schedule: {autoQ.data?.enabled ? "On" : "Off"}{autoQ.data?.status?.state ? ` · Last run: ${autoQ.data.status.state}` : " · First run pending"}{autoQ.data?.lastRun ? ` · ${new Date(autoQ.data.lastRun).toLocaleString("en-GB",{timeZone:"Africa/Lagos"})} WAT` : ""}</p>
+        <p className="text-xs text-muted-foreground">Saved schedule: {autoQ.data?.enabled ? "On" : "Off"}{autoQ.data?.status?.state ? ` · Last run: ${autoQ.data.status.state === "partial" ? "completed with source warning" : autoQ.data.status.state}` : " · First run pending"}{autoQ.data?.lastRun ? ` · ${new Date(autoQ.data.lastRun).toLocaleString("en-GB",{timeZone:"Africa/Lagos"})} WAT` : ""}</p>
+        {autoQ.data?.status?.warning && <p className="text-xs text-foreground">{autoQ.data.status.warning}</p>}
+        {autoQ.data?.status?.matches != null && <p className="text-xs text-muted-foreground">{autoQ.data.status.matches} matches analysed · {autoQ.data.status.picks ?? 0} predictions saved</p>}
         {autoQ.data?.status?.error && <p className="text-xs text-destructive">{autoQ.data.status.error}</p>}
         {autoQ.isError && <p className="text-xs text-destructive">Unable to load daily scan preferences. Try signing in again.</p>}
       </div>

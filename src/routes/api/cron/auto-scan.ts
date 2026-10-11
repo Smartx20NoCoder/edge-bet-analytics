@@ -16,7 +16,7 @@ export const Route = createFileRoute("/api/cron/auto-scan")({ server: { handlers
     const config = ScanConfig.parse(settings.scan_automation_config);
     const prior = settings.scan_automation_status;
     const day = watDay(now);
-    if (prior?.day === day && prior?.state === "complete") return Response.json({ok:true,skipped:true,reason:"already_completed_today"});
+    if (prior?.day === day && ["complete", "partial"].includes(prior?.state)) return Response.json({ok:true,skipped:true,reason:"already_completed_today"});
     if (prior?.state === "running" && now.getTime()-Date.parse(settings.scan_automation_last_run)<15*60*1000) return Response.json({ok:true,skipped:true,reason:"already_running"});
     let claim = supabaseAdmin.from("engine_settings").update({scan_automation_last_run:now.toISOString(),scan_automation_status:{day,runId,state:"running"}}).eq("id",true);
     claim = settings.scan_automation_last_run ? claim.eq("scan_automation_last_run",settings.scan_automation_last_run) : claim.is("scan_automation_last_run",null);
@@ -31,8 +31,11 @@ export const Route = createFileRoute("/api/cron/auto-scan")({ server: { handlers
     if (!response.ok) throw new Error(`Scan request failed (${response.status})`);
     const events = (await response.text()).split("\n").filter(Boolean).map(line=>JSON.parse(line));
     const done = events.find(e=>e.event === "done");
-    if (!done || (done.failures?.length ?? 0)>0 || events.some(e=>e.event === "error")) throw new Error("Combined scan did not complete both sources; successful checks remain saved");
-    const status = {day,runId,state:"complete",completedAt:new Date().toISOString(),matches:done.matchesAnalyzed,picks:done.predictionsGenerated};
+    if (!done || events.some(e=>e.event === "error")) throw new Error(events.find(e=>e.event === "error")?.message ?? "Scan ended before completion; successful checks remain saved");
+    if (!done.completedSources?.length) throw new Error(`No scan source completed: ${(done.failures ?? []).join(", ") || "source unavailable"}`);
+    const failures: string[] = done.failures ?? [];
+    const warning = failures.length ? `${done.completedSources.join(" and ")} completed; ${failures.join(", ")}. Saved predictions and daily picks are retained.${failures.includes("Odds API unavailable") ? " Add a working Odds API key or renew its quota in Settings to scan that source." : " Check source availability before a manual retry."}` : undefined;
+    const status = {day,runId,state:failures.length ? "partial" : "complete",completedSources:done.completedSources,failures,warning,completedAt:new Date().toISOString(),matches:done.matchesAnalyzed,picks:done.predictionsGenerated};
     const {error:saveError} = await supabaseAdmin.from("engine_settings").update({scan_automation_status:status}).eq("id",true).eq("scan_automation_status->>runId",runId);
     if (saveError) throw new Error(saveError.message);
     console.log("[cron:auto-scan] complete",status);

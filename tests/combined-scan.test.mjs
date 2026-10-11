@@ -11,7 +11,7 @@ const modules={
  '@/lib/goaloo.server':`export const setForcedKey=()=>{};export const hasMainOdds=()=>true;export const fetchLiveOdds=()=>{};export const fetchMatchAnalysis=()=>{};export async function fetchScheduleByDate(){globalThis.scanOrder.push('goaloo');return []}`,
  '@/lib/predictions.server':`export const gradePrediction=()=>{};export const predictCorners=()=>[];export const predictMatchOutcomes=()=>[];export const meetsConfidenceThreshold=()=>true;`,
  '@/lib/predictions.functions':`export async function lockDailyBestPickIfNeeded(){globalThis.scanOrder.push('select')}`,
- '@/lib/oddsapi.server':`export async function getOddsApiKeysStatus(){return {availableKeys:1}};export async function runDualFreeScan(opts){globalThis.scanLimit=opts.maxMatches;globalThis.scanOrder.push('odds');if(globalThis.failOdds)throw new Error('fixture source unavailable');opts.onEvent('done',{matchesAnalyzed:5,predictionsGenerated:2});return {matchesAnalyzed:5,predictionsGenerated:2}}`,
+ '@/lib/oddsapi.server':`export async function getOddsApiKeysStatus(){return {availableKeys:globalThis.noOddsKeys?0:1}};export async function runDualFreeScan(opts){globalThis.scanLimit=opts.maxMatches;globalThis.scanOrder.push('odds');if(globalThis.failOdds)throw new Error('fixture source unavailable');opts.onEvent('done',{matchesAnalyzed:5,predictionsGenerated:2});return {matchesAnalyzed:5,predictionsGenerated:2}}`,
 };
 registerHooks({resolve(s,c,next){if(modules[s])return {url:modules[s].startsWith('file:')?modules[s]:'data:text/javascript,'+encodeURIComponent(modules[s]),shortCircuit:true};return next(s,c)}});
 const {Route}=await import('../src/routes/api/analyze-stream.ts');
@@ -34,3 +34,9 @@ console.log('Combined route runs both phases before daily selection and emits on
 for(const limit of [1,357,500]){const response=await Route.server.handlers.GET({request:new Request('https://example.test/api/analyze-stream?date=2099-10-07&engine=dual_free&maxMatches='+limit,{headers:{authorization:'Bearer test-admin-token-valid'}})});await response.text();assert.equal(globalThis.scanLimit,limit);}
 for(const limit of ['0','501','1.5','bad']){const response=await Route.server.handlers.GET({request:new Request('https://example.test/api/analyze-stream?maxMatches='+limit,{headers:{authorization:'Bearer test-admin-token-valid'}})});assert.equal(response.status,400);}
 console.log('Real scan route passes custom limits through to Odds API up to 500 and rejects invalid limits.');
+
+globalThis.scanOrder=[];globalThis.noOddsKeys=true;globalThis.failOdds=false;
+const unavailable=await Route.server.handlers.GET({request:new Request('https://example.test/api/analyze-stream?date=2099-10-07&engine=combined',{headers:{authorization:'Bearer test-admin-token-valid'}})});
+const final=(await unavailable.text()).trim().split('\n').map(JSON.parse).at(-1);
+assert.deepEqual(globalThis.scanOrder,['goaloo','select']);assert.deepEqual(final.completedSources,['Goaloo']);assert.deepEqual(final.failures,['Odds API unavailable']);
+console.log('Unavailable Odds API retains a completed Goaloo phase and still selects fixed daily picks.');

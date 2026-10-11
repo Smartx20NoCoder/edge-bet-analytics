@@ -428,9 +428,10 @@ export async function handleAnalyzeStream(request: Request) {
 
             try {
               const failures: string[] = [];
+              const completedSources: string[] = [];
               if (isportsAvailable) {
                 send("status", { message: "— Goaloo statistical scan starting —" });
-                try { await runIsportsScan(); }
+                try { await runIsportsScan(); completedSources.push("Goaloo"); }
                 catch (e) {
                   failures.push("Goaloo");
                   send("status", { message: `Goaloo scan failed: ${e?.message ?? e}. Continuing with The Odds API.` });
@@ -451,6 +452,7 @@ export async function handleAnalyzeStream(request: Request) {
                       send(event, payload);
                     },
                   });
+                  completedSources.push("Odds API");
                   summary.matchesAnalyzed += result.matchesAnalyzed;
                   summary.predictionsGenerated += result.predictionsGenerated;
                 } catch (e) {
@@ -462,8 +464,8 @@ export async function handleAnalyzeStream(request: Request) {
                 failures.push("Odds API unavailable");
               }
               send("status", { message: "Both source phases finished. Selecting Single and Combo of the Day from the shared qualifying pool…" });
-              await lockDailyBestPickIfNeeded();
-              send("done", { message: failures.length ? "Scan finished with source warnings." : "Scan complete.", ...summary, failures });
+              if (completedSources.length) await lockDailyBestPickIfNeeded();
+              send("done", { message: failures.length ? "Scan finished with source warnings." : "Scan complete.", ...summary, failures, completedSources });
             } catch (e) {
               send("error", { message: e?.message ?? "scan failed" });
             } finally {
