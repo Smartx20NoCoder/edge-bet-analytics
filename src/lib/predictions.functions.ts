@@ -609,11 +609,12 @@ export const updateResults = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => z.object({ analysisId: z.string(), accessToken: z.string().min(20) }).parse(d))
   .handler(async ({ data }) => {
     await requireAdmin(data.accessToken);
-    const { data: preds, error } = await supabaseAdmin
+    const { data: rows, error } = await supabaseAdmin
       .from("predictions")
       .select("*")
       .eq("analysis_id", data.analysisId);
     if (error) throw new Error(error.message);
+    const preds=(rows??[]).filter(p=>!(p.stats as any)?.manualFullTimeResult);
     if (!preds || !preds.length) return { updated: 0, skipped: 0, noResultFound: 0 };
 
     const isportsPreds = preds.filter((p) => !isVoidStatus(p.ft_status)&& ISPORTS_NUMERIC_RE.test(String(p.match_id)));
@@ -729,8 +730,9 @@ export async function updateAllPendingResultsInternal(apiKey?: 1 | 2, options: {
     pendingQuery = pendingQuery.gte("kickoff", new Date(now-7*24*60*60000).toISOString())
       .lte("kickoff", new Date(now-110*60000).toISOString());
   }
-  const { data: preds, error } = await pendingQuery;
+  const { data: rows, error } = await pendingQuery;
   if (error) throw new Error(error.message);
+  const preds=(rows??[]).filter(p=>!(p.stats as any)?.manualFullTimeResult);
   if (!preds || !preds.length) {await syncEdgeTelegramResultsSafely([]);return { updated: 0, stillPending: 0, dates: 0, totalScanned: 0 };}
 
   const isportsPreds = preds.filter((p) => !isVoidStatus(p.ft_status)&& ISPORTS_NUMERIC_RE.test(String(p.match_id)));
@@ -972,4 +974,32 @@ export const markPredictionAwarded = createServerFn({method:"POST"})
   const ids=[...new Set([data.predictionId,...(siblings??[]).filter(p=>p.match_id===row.match_id||(row.home_team&&row.away_team&&matchSavedResult(p,[fixture]))).map(p=>p.id)])];
   const {error:saveError}=await supabaseAdmin.from('predictions').update({ft_status:'AWARDED',is_correct:null,total_corners:null,results_updated_at:new Date().toISOString()}).in('id',ids);
   if(saveError)throw new Error(saveError.message);await syncEdgeTelegramResultsSafely(ids);return {ok:true};
+ });
+
+export const saveManualFullTimeResult = createServerFn({method:"POST"})
+ .inputValidator(z.object({accessToken:z.string().min(20),predictionId:z.string().uuid(),homeScore:z.number().int().min(0).max(99),awayScore:z.number().int().min(0).max(99),source:z.string().trim().min(5).max(500),confirmed:z.literal(true)}))
+ .handler(async({data})=>{
+  await requireAdmin(data.accessToken);
+  const {data:row,error}=await supabaseAdmin.from('predictions').select('*').eq('id',data.predictionId).single();
+  if(error||!row)throw new Error('Saved prediction not found.');
+  if(!row.kickoff||!Number.isFinite(Date.parse(row.kickoff))||Date.parse(row.kickoff)>Date.now())throw new Error('A full-time result can only be entered after kickoff.');
+  const [sameMatch,sameTime]=await Promise.all([
+   row.match_id?supabaseAdmin.from('predictions').select('*').eq('match_id',row.match_id):Promise.resolve({data:[],error:null}),
+   supabaseAdmin.from('predictions').select('*').eq('kickoff',row.kickoff),
+  ]);
+  if(sameMatch.error||sameTime.error)throw new Error('Could not read related predictions.');
+  const fixture={matchId:row.match_id,homeName:row.home_team,awayName:row.away_team,kickoff:row.kickoff};
+  const related=[row,...(sameMatch.data??[]),...(sameTime.data??[]).filter(p=>row.home_team&&row.away_team&&matchSavedResult(p,[fixture]))];
+  const unique=[...new Map(related.map(p=>[p.id,p])).values()];
+  const checkedAt=new Date().toISOString();
+  for(const p of unique){
+   const previous=p.stats&&typeof p.stats==='object'&&!Array.isArray(p.stats)?p.stats as Record<string,any>:{};
+   const audit={source:data.source,checkedAt,homeScore:data.homeScore,awayScore:data.awayScore,previous:{homeScore:p.home_score,awayScore:p.away_score,status:p.ft_status,isCorrect:p.is_correct}};
+   const corners=p.total_corners??null;
+   const correct=gradePrediction(p.prediction_type,p.selection,{homeScore:data.homeScore,awayScore:data.awayScore,homeCorners:corners,awayCorners:corners===null?null:0,status:'FT'});
+   const {error:saveError}=await supabaseAdmin.from('predictions').update({home_score:data.homeScore,away_score:data.awayScore,ft_status:'FT',is_correct:correct,results_updated_at:checkedAt,stats:{...previous,manualFullTimeResult:audit,manualResultHistory:[...(Array.isArray(previous.manualResultHistory)?previous.manualResultHistory:[]),audit].slice(-20)}}).eq('id',p.id);
+   if(saveError)throw new Error('Could not save every related result. Please retry the same score.');
+  }
+  await syncEdgeTelegramResultsSafely(unique.map(p=>p.id));
+  return {ok:true,updated:unique.length};
  });

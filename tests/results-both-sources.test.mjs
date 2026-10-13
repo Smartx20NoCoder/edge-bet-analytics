@@ -47,3 +47,7 @@ const before=Date.now();await updateAllPendingResultsInternal(undefined,{automat
 assert.ok(Date.parse(globalThis.resultFrom)>=before-7*86400000&&Date.parse(globalThis.resultFrom)<=after-7*86400000);
 assert.ok(Date.parse(globalThis.resultUntil)>=before-110*60000&&Date.parse(globalThis.resultUntil)<=after-110*60000);
 console.log('Automatic checks bound the recent backlog and wait 110 minutes after kickoff.');
+
+// Verified manual scores stay authoritative when provider updates are retried.
+globalThis.writes=[];globalThis.pending=globalThis.pending.map(p=>({...p,stats:{manualFullTimeResult:{homeScore:2,awayScore:1}}}));
+assert.equal((await updateAllPendingResultsInternal()).updated,0);assert.equal(globalThis.writes.length,0);

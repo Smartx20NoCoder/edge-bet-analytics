@@ -1,0 +1,17 @@
+import {useState} from 'react';
+import {useServerFn} from '@tanstack/react-start';
+import {useQueryClient} from '@tanstack/react-query';
+import {adminAccessToken,useAdminAccess} from '@/lib/admin-session';
+import {saveManualFullTimeResult} from '@/lib/predictions.functions';
+import {Button} from '@/components/ui/button';
+
+export function ManualResultEditor({prediction}:{prediction:{id:string,home_team:string,away_team:string,kickoff:string|null,home_score?:number|null,away_score?:number|null}}){
+ const admin=useAdminAccess(),save=useServerFn(saveManualFullTimeResult),qc=useQueryClient();
+ const [open,setOpen]=useState(false),[home,setHome]=useState(''),[away,setAway]=useState(''),[source,setSource]=useState(''),[confirmed,setConfirmed]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ if(!admin||!prediction.kickoff||!Number.isFinite(Date.parse(prediction.kickoff))||Date.parse(prediction.kickoff)>Date.now())return null;
+ async function submit(e:React.FormEvent){e.preventDefault();setError('');if(!confirmed||home===''||away==='')return;
+  if(!window.confirm(`Save confirmed FT ${home}–${away} for ${prediction.home_team} vs ${prediction.away_team}? This replaces the current result and recalculates every saved prediction for this fixture.`))return;
+  setBusy(true);try{await save({data:{accessToken:await adminAccessToken(),predictionId:prediction.id,homeScore:Number(home),awayScore:Number(away),source,confirmed:true}});await qc.invalidateQueries();setOpen(false);setConfirmed(false);}catch(e){setError(e instanceof Error?e.message:'Could not save result.');}finally{setBusy(false);}
+ }
+ return <div className="border-t border-border/40 pt-2"><button type="button" className="text-xs underline text-muted-foreground" disabled={busy} aria-expanded={open} onClick={()=>{setOpen(!open);setError('');if(!open){setHome(prediction.home_score==null?'':String(prediction.home_score));setAway(prediction.away_score==null?'':String(prediction.away_score));}}}>{open?'Close result editor':'Update individual FT result'}</button>{open&&<form onSubmit={submit} className="mt-3 space-y-3 text-xs"><p>Enter the verified score for a finished, played match. The app calculates won/lost automatically.</p><div className="grid grid-cols-2 gap-2">{[['Home score',home,setHome],['Away score',away,setAway]].map(([label,value,set])=><label key={String(label)} className="grid gap-1">{String(label)}<input required type="number" min="0" max="99" step="1" value={value as string} disabled={busy} onChange={e=>(set as (v:string)=>void)(e.target.value)} className="w-full rounded border border-border bg-background text-foreground p-2 text-base"/></label>)}</div><label className="grid gap-1">Verified result source or link<input required minLength={5} maxLength={500} value={source} disabled={busy} onChange={e=>setSource(e.target.value)} className="w-full rounded border border-border bg-background text-foreground p-2 text-base" placeholder="Result page or source used"/></label><label className="flex items-start gap-2"><input type="checkbox" checked={confirmed} disabled={busy} onChange={e=>setConfirmed(e.target.checked)}/>I verified that this match finished and this is its full-time score.</label><Button size="sm" disabled={busy||!confirmed||home===''||away===''||source.trim().length<5}>{busy?'Saving…':'Save confirmed FT result'}</Button>{error&&<p role="alert" className="text-destructive">{error}</p>}</form>}</div>;
+}

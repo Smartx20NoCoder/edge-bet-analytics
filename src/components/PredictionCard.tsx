@@ -1,3 +1,4 @@
+import {ManualResultEditor} from "./ManualResultEditor";
 import {isVoidStatus} from '@/lib/slip-settlement';
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -155,6 +156,7 @@ export function PredictionCard({ p,onMarkAwarded,marking }: { p: Prediction;onMa
         </div>
       )}
 
+      <ManualResultEditor prediction={p}/>
       {onMarkAwarded&&!voided&&<button className="text-xs text-muted-foreground underline self-start" disabled={marking} onClick={onMarkAwarded}>Mark awarded · exclude from grading</button>}
       <div className="flex items-center justify-between pt-2 border-t border-border/60">
         <span className={cn("inline-flex items-center gap-1.5 text-xs font-medium",

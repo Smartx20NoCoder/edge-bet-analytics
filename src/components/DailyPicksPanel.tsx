@@ -1,3 +1,4 @@
+import {ManualResultEditor} from "./ManualResultEditor";
 import {isVoidStatus,settleSlip} from '@/lib/slip-settlement';
 import { adminAccessToken } from "@/lib/admin-session";
 import { useServerFn } from "@tanstack/react-start";
@@ -52,6 +53,7 @@ function PickRow({ p, compact }: { p: any; compact?: boolean }) {
         )}
         {voided&&<div className="text-[11px] text-muted-foreground">— Void · {String(p.ft_status).toLowerCase()} · settled at 1.00</div>}{!graded&&!voided && <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1"><Clock className="h-3 w-3" /> Pending</div>}
       </div>
+      <ManualResultEditor prediction={p}/>
     </div>
   );
 }
