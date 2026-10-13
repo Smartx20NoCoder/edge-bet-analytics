@@ -828,7 +828,7 @@ export async function updateAllPendingResultsInternal(apiKey?: 1 | 2, options: {
 }
 
 
-// ---- Single / Combo of the Day ----
+// ---- Single of the Day (legacy combo records retained for audit) ----
 const DAILY_PICK_EV_CEILING = 0.40;
 const DAILY_PICK_TYPES = ["match_winner", "over_2_5_goals", "match_winner_hedged"];
 
@@ -869,11 +869,11 @@ export async function lockDailyBestPickIfNeeded(): Promise<void> {
     const locked = locks.get(day) as any;
     // The first saved daily selection is final, including before kickoff.
     if (locked) continue;
-    const { single, second } = selectDailyPair(picks);
+    const { single } = selectDailyPair(picks);
     if (!single) continue;
     const row = {
-      day, single_prediction_id: single.id, combo_prediction_id_1: single.id,
-      combo_prediction_id_2: second?.id ?? null, locked_at: new Date().toISOString(),
+      day, single_prediction_id: single.id, combo_prediction_id_1: null,
+      combo_prediction_id_2: null, locked_at: new Date().toISOString(),
     };
     const { error: insertErr } = await supabaseAdmin.from("daily_best_picks").upsert(row, { onConflict: "day", ignoreDuplicates: true });
     if (insertErr) throw new Error(`Daily picks save failed for ${day}: ${insertErr.message}`);

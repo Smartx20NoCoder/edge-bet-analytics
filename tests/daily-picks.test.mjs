@@ -26,6 +26,10 @@ const persist=new Function('publishEdgeSinglesSafely','supabaseAdmin','DAILY_PIC
 await persist();
 assert.equal(writes,1);
 assert.equal(stored.day,day);
+assert.equal(stored.single_prediction_id,b.id);
+assert.equal(stored.combo_prediction_id_1,null);
+assert.equal(stored.combo_prediction_id_2,null);
+stored={...stored,combo_prediction_id_1:a.id,combo_prediction_id_2:c.id};
 const original=structuredClone(stored);
 b.expected_value=.3;c.expected_value=.35;
 await persist();

@@ -4,7 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { getDailyPicks } from "@/lib/predictions.functions";
-import { CheckCircle2, XCircle, Clock, AlertTriangle, ChevronLeft, ChevronRight, Star, Link2 } from "lucide-react";
+import { CheckCircle2, XCircle, Clock, ChevronLeft, ChevronRight, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -79,32 +79,7 @@ function DayCard({ d }: { d: any }) {
         {d.single ? <PickRow p={d.single} /> : <p className="text-xs text-muted-foreground">No qualifying pick this day.</p>}
       </div>
 
-      <div className="pt-2 border-t border-border/60">
-        <div className="flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">
-          <Link2 className="h-3 w-3" /> Combo of the Day
-          <span className="ml-1 inline-flex items-center gap-1 text-gold"><AlertTriangle className="h-3 w-3" /> Experimental</span>
-        </div>
-        {d.combo ? (
-          <div className="space-y-1">
-            {d.combo.legs.map((leg: any) => <PickRow key={leg.id} p={leg} compact />)}
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 mt-1 border-t border-border/40">
-              <span className="text-xs text-muted-foreground">Combined odds {d.combo.combinedOdds===null?'—':d.combo.combinedOdds.toFixed(2)}</span>
-              {d.combo.status === 'pending' ? (
-                <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1"><Clock className="h-3 w-3" /> Pending</span>
-              ) : (
-                <span className={cn("text-[11px] font-semibold inline-flex items-center gap-1", d.combo.status==='void' ? "text-muted-foreground" : d.combo.isCorrect ? "text-neon" : "text-destructive")}>
-                  {d.combo.status==='void' ? 'Void — stake returned' : d.combo.isCorrect ? <><CheckCircle2 className="h-3 w-3" />Won</> : <><XCircle className="h-3 w-3" />Lost</>}
-                  {d.combo.profit !== null && ` · ${d.combo.profit >= 0 ? "+" : ""}${d.combo.profit.toFixed(2)}u`}
-                </span>
-              )}
-              {d.combo.payout !== null && <span className="text-[11px] text-muted-foreground">Return {d.combo.payout.toFixed(2)}u per 1u stake</span>}
-              {d.combo.voidLegs > 0 && <span className="text-[11px] text-muted-foreground">{d.combo.voidLegs} void leg{d.combo.voidLegs===1?'':'s'} @ 1.00</span>}
-            </div>
-          </div>
-        ) : (
-          <p className="text-xs text-muted-foreground">Not enough qualifying picks from different matches this day.</p>
-        )}
-      </div>
+
     </div>
   );
 }
@@ -119,10 +94,9 @@ export function DailyPicksPanel() {
   return (
     <section className="mx-auto w-full max-w-6xl px-3 sm:px-4 lg:px-6 pb-10 sm:pb-12">
       <div className="mb-4">
-        <h2 className="text-xl font-bold">Single & Combo <span className="text-neon">of the Day</span></h2>
+        <h2 className="text-xl font-bold">Single <span className="text-neon">of the Day</span></h2>
         <p className="text-xs text-muted-foreground mt-1 max-w-4xl leading-5">
-          Single of the Day is the highest-EV qualifying pick each day. Combo of the Day (2 legs, different matches) is tracked
-          separately as an experiment — not a recommendation. Both draw only from picks with a real confirmed market price.
+          Single of the Day is the highest-EV qualifying pick each day, using a confirmed market price. Saved daily selections remain fixed.
         </p>
       </div>
 

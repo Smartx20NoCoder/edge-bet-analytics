@@ -51,7 +51,7 @@ export function MonthlyPerformancePanel() {
       >
         {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
         <BarChart3 className="h-3.5 w-3.5" />
-        Monthly win/loss/void (Single & Combo of the Day)
+        Monthly win/loss/void (Single of the Day)
       </button>
       {open && (
         <div className="mt-2 glass rounded-xl p-4 w-full max-w-md">
@@ -66,7 +66,6 @@ export function MonthlyPerformancePanel() {
                 <div key={m.month} className="pb-2 border-b border-border/40 last:border-0 last:pb-0">
                   <div className="text-[11px] font-semibold mb-1">{formatMonth(m.month)}</div>
                   <Row label="Single" win={m.singleWin} loss={m.singleLoss} pending={m.singlePending} voided={m.singleVoid ?? 0} winRate={m.singleWinRate} profitLoss={m.singleProfitLoss ?? 0} />
-                  <Row label="Combo" win={m.comboWin} loss={m.comboLoss} pending={m.comboPending} voided={m.comboVoid ?? 0} winRate={m.comboWinRate} profitLoss={m.comboProfitLoss ?? 0} />
                 </div>
               ))}
             </div>
